@@ -1,5 +1,5 @@
 let activeChannelId = null;
-let adminPassword = localStorage.getItem('dmg_admin_pwd') || '';
+let sessionToken = localStorage.getItem('dmg_admin_token') || '';
 let socket = null;
 
 let isEmbedOpen = false;
@@ -83,9 +83,10 @@ async function attemptLogin() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ password: pwd })
     });
-    if (res.ok) {
-      adminPassword = pwd;
-      localStorage.setItem('dmg_admin_pwd', pwd);
+    const data = await res.json();
+    if (res.ok && data.success) {
+      sessionToken = data.token;
+      localStorage.setItem('dmg_admin_token', sessionToken);
       document.getElementById('login-overlay').style.display = 'none';
       document.getElementById('main-app').style.display = 'flex';
       initSocket();
@@ -98,10 +99,17 @@ async function attemptLogin() {
   }
 }
 
+async function logout() {
+  await fetch('/api/logout', { method: 'POST', headers: { 'Authorization': sessionToken } });
+  sessionToken = '';
+  localStorage.removeItem('dmg_admin_token');
+  location.reload();
+}
+
 // Wrapper for fetch to include auth token
 async function apiFetch(url, options = {}) {
   if (!options.headers) options.headers = {};
-  options.headers['Authorization'] = adminPassword;
+  options.headers['Authorization'] = sessionToken;
   
   // Cache busting
   const separator = url.includes('?') ? '&' : '?';
@@ -117,15 +125,19 @@ async function apiFetch(url, options = {}) {
 }
 
 // Check initial auth state
-apiFetch('/api/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: adminPassword }) })
-  .then(res => {
-    if (res.ok) {
-      document.getElementById('login-overlay').style.display = 'none';
-      document.getElementById('main-app').style.display = 'flex';
-      initSocket();
-      loadOverview();
-    }
-  }).catch(() => {});
+if (!sessionToken) {
+  document.getElementById('login-overlay').style.display = 'flex';
+} else {
+  apiFetch('/api/stats')
+    .then(res => {
+      if (res.ok) {
+        document.getElementById('login-overlay').style.display = 'none';
+        document.getElementById('main-app').style.display = 'flex';
+        initSocket();
+        loadOverview();
+      }
+    }).catch(() => {});
+}
 
 
 // View Switching
