@@ -3,6 +3,9 @@ const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, ChannelType,
 module.exports = function setupTicketSystem(client) {
   client.on('interactionCreate', async interaction => {
     if (interaction.isStringSelectMenu() && interaction.customId === 'ticket_select') {
+      // Defer the reply immediately so it doesn't time out during API calls
+      await interaction.deferReply({ ephemeral: true });
+
       const categoryValue = interaction.values[0];
       const guild = interaction.guild;
       const user = interaction.user;
@@ -15,9 +18,6 @@ module.exports = function setupTicketSystem(client) {
           type: ChannelType.GuildCategory,
         });
       }
-
-      // Defer the reply so it doesn't time out
-      await interaction.deferReply({ ephemeral: true });
 
       // Create the private text channel
       try {
@@ -100,7 +100,7 @@ module.exports = function setupTicketSystem(client) {
 
     if (interaction.isModalSubmit() && interaction.customId === 'ticket_close_modal') {
       const reason = interaction.fields.getTextInputValue('close_reason');
-      const { TicketTranscript } = require('../database');
+      const { prisma } = require('../database');
       
       await interaction.reply({ content: 'Saving transcript and closing ticket in 3 seconds...', ephemeral: true });
       
@@ -118,11 +118,16 @@ module.exports = function setupTicketSystem(client) {
           });
         });
 
-        await TicketTranscript.create({
-          ticketName: interaction.channel.name,
-          closedBy: interaction.user.tag,
-          reason: reason,
-          transcript: transcriptArray
+        await prisma.ticketTranscript.create({
+          data: {
+            ticketId: interaction.channel.name,
+            userId: interaction.user.id,
+            transcript: JSON.stringify({
+              closedBy: interaction.user.tag,
+              reason: reason,
+              messages: transcriptArray
+            })
+          }
         });
 
         setTimeout(async () => {

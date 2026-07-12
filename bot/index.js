@@ -1,5 +1,5 @@
 const { Client, GatewayIntentBits, REST, Routes, EmbedBuilder, MessageFlags } = require('discord.js');
-const { Settings, Command, Warning } = require('../database');
+const { prisma } = require('../database');
 
 function setupBot(io) {
   const GUILD_ID = process.env.GUILD_ID || '1494354069605584896';
@@ -22,7 +22,7 @@ function setupBot(io) {
   
   async function sendAuditLog(embedBuilder) {
     try {
-      const settings = await Settings.findOne({ guildId: GUILD_ID });
+      const settings = await prisma.settings.findUnique({ where: { guildId: GUILD_ID } });
       if (settings && settings.logChannel) {
         const channel = client.channels.cache.get(settings.logChannel);
         if (channel) await channel.send({ embeds: [embedBuilder] });
@@ -33,7 +33,7 @@ function setupBot(io) {
   client.on('guildMemberAdd', async (member) => {
     if (member.guild.id !== GUILD_ID) return;
     try {
-      const settings = await Settings.findOne({ guildId: GUILD_ID });
+      const settings = await prisma.settings.findUnique({ where: { guildId: GUILD_ID } });
       if (!settings) return;
       
       if (settings.autoRole) {
@@ -236,7 +236,7 @@ function setupBot(io) {
       const reason = interaction.options.getString('reason');
       const sendDm = interaction.options.getBoolean('dm');
 
-      await Warning.create({ userId: targetUser.id, reason: reason, timestamp: Date.now() });
+      await prisma.warning.create({ data: { userId: targetUser.id, reason: reason } });
 
       await interaction.reply({ content: `Processing warning for ${targetUser}...` });
 
@@ -261,7 +261,7 @@ function setupBot(io) {
       
     } else if (interaction.commandName === 'view-warnings') {
       const targetUser = interaction.options.getUser('user');
-      const userWarnings = await Warning.find({ userId: targetUser.id });
+      const userWarnings = await prisma.warning.findMany({ where: { userId: targetUser.id } });
 
       if (userWarnings.length === 0) {
         return interaction.reply({ content: `**${targetUser.tag}** has no warnings.`, flags: MessageFlags.Ephemeral });
@@ -276,9 +276,9 @@ function setupBot(io) {
       
     } else if (interaction.commandName === 'remove-warnings') {
       const targetUser = interaction.options.getUser('user');
-      const result = await Warning.deleteMany({ userId: targetUser.id });
+      const result = await prisma.warning.deleteMany({ where: { userId: targetUser.id } });
       
-      if (result.deletedCount === 0) {
+      if (result.count === 0) {
         return interaction.reply({ content: `**${targetUser.tag}** has no warnings to remove.`, flags: MessageFlags.Ephemeral });
       }
       
@@ -286,18 +286,16 @@ function setupBot(io) {
       
     } else if (interaction.commandName === 'bypass-cooldown') {
       const targetUser = interaction.options.getUser('user');
-      const { AppCooldown } = require('../database');
-      const result = await AppCooldown.deleteOne({ userId: targetUser.id });
-      if (result.deletedCount > 0) {
+      const result = await prisma.appCooldown.delete({ where: { userId: targetUser.id } }).catch(() => ({}));
+      if (result.id) {
         await interaction.reply({ content: `✅ Removed the application cooldown for <@${targetUser.id}>. They can apply again now!`, ephemeral: true });
       } else {
         await interaction.reply({ content: `⚠️ <@${targetUser.id}> is not currently on an application cooldown.`, ephemeral: true });
       }
       
     } else if (interaction.commandName === 'view-cooldown') {
-      const { AppCooldown } = require('../database');
-      const cooldowns = await AppCooldown.find({});
-      const activeCooldowns = cooldowns.filter(c => c.expiresAt > Date.now());
+      const cooldowns = await prisma.appCooldown.findMany({});
+      const activeCooldowns = cooldowns.filter(c => c.expiresAt > new Date());
       
       if (activeCooldowns.length === 0) {
         return interaction.reply({ content: `There are currently no users on an application cooldown.`, ephemeral: true });
@@ -317,7 +315,7 @@ function setupBot(io) {
     if (message.author.bot) return;
 
     try {
-      const cmds = await Command.find({});
+      const cmds = await prisma.command.findMany({});
       const contentLower = message.content.trim().toLowerCase();
       const cmd = cmds.find(c => {
         const trigger = c.name.toLowerCase();

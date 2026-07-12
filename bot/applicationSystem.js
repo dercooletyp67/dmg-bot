@@ -1,5 +1,5 @@
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
-const { Settings } = require('../database');
+const { prisma } = require('../database');
 
 const questions = [
   "What's your in-game name?",
@@ -16,8 +16,8 @@ const questions = [
 ];
 
 async function getSettings() {
-  const guildId = process.env.GUILD_ID || '1494354069605584896';
-  const doc = await Settings.findOne({ guildId });
+  const guildId = process.env.GUILD_ID || '1423630012623491073';
+  const doc = await prisma.settings.findUnique({ where: { guildId } });
   return doc || {};
 }
 
@@ -25,11 +25,10 @@ module.exports = function setupApplicationSystem(client) {
   client.on('interactionCreate', async interaction => {
     if (interaction.isButton()) {
       if (interaction.customId === 'apply_start_btn') {
-        const { AppCooldown } = require('../database');
-        const cooldown = await AppCooldown.findOne({ userId: interaction.user.id });
-        if (cooldown && cooldown.expiresAt > Date.now()) {
+        const cooldown = await prisma.appCooldown.findUnique({ where: { userId: interaction.user.id } });
+        if (cooldown && cooldown.expiresAt > new Date()) {
           return interaction.reply({ 
-            content: `⏳ You are on an application cooldown! You can apply again <t:${Math.floor(cooldown.expiresAt / 1000)}:R>.`, 
+            content: `⏳ You are on an application cooldown! You can apply again <t:${Math.floor(cooldown.expiresAt.getTime() / 1000)}:R>.`, 
             ephemeral: true 
           });
         }
@@ -180,24 +179,28 @@ module.exports = function setupApplicationSystem(client) {
             await reviewChannel.send({ embeds: [embed], components: [row] });
             
             // Save to DB
-            const { Application, AppCooldown } = require('../database');
-            await Application.create({
-              userId: user.id,
-              userTag: user.tag,
-              timeTaken: `${totalMins}m ${totalSecs}s`,
-              aiScore: aiScore,
-              plagiarism: copyPasteDetected,
-              questions: questions,
-              answers: answers,
-              status: 'PENDING'
+            // Save to DB
+            await prisma.application.create({
+              data: {
+                userId: user.id,
+                answers: JSON.stringify({
+                  userTag: user.tag,
+                  timeTaken: `${totalMins}m ${totalSecs}s`,
+                  aiScore: aiScore,
+                  plagiarism: copyPasteDetected,
+                  questions: questions,
+                  answers: answers
+                }),
+                status: 'PENDING'
+              }
             });
 
             // Add to cooldown DB
-            await AppCooldown.updateOne(
-              { userId: user.id },
-              { $set: { expiresAt: Date.now() + 24 * 60 * 60 * 1000 } },
-              { upsert: true }
-            );
+            await prisma.appCooldown.upsert({
+              where: { userId: user.id },
+              update: { expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000) },
+              create: { userId: user.id, expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000) }
+            });
           }
         } catch (err) {
           console.error('Failed to send application to review channel:', err);
@@ -269,12 +272,16 @@ module.exports = function setupApplicationSystem(client) {
             oldEmbed.setColor(color);
             oldEmbed.addFields({ name: `Status: ${action.toUpperCase()}`, value: `**By:** <@${interaction.user.id}>\n**Reason:** ${reason}` });
 
-            const { Application } = require('../database');
-            await Application.findOneAndUpdate(
-               { userId: targetId, status: 'PENDING' },
-               { $set: { status: action.toUpperCase(), reason: reason, processedBy: interaction.user.tag } },
-               { sort: { timestamp: -1 } }
-            );
+            const recentApp = await prisma.application.findFirst({
+              where: { userId: targetId, status: 'PENDING' },
+              orderBy: { timestamp: 'desc' }
+            });
+            if (recentApp) {
+              await prisma.application.update({
+                where: { id: recentApp.id },
+                data: { status: action.toUpperCase() }
+              });
+            }
 
             const guild = interaction.guild;
             const logChannel = guild.channels.cache.find(c => c.name === 'application-logs');
