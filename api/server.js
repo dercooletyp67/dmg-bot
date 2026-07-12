@@ -169,14 +169,20 @@ module.exports = (client) => {
       const warnings = await prisma.warning.findMany({});
       const uniqueWarnedUsers = new Set(warnings.map(w => w.userId)).size;
 
-      const memCount = totalMembers || 150; 
-      const notApplied = Math.floor(memCount * 0.15); 
-      const blacklisted = Math.floor(uniqueWarnedUsers * 0.5); 
+      let blacklisted = 0;
+      if (guild) {
+        const blacklistRole = guild.roles.cache.get('1430526946969780306');
+        if (blacklistRole) {
+          blacklisted = blacklistRole.members.size;
+        }
+      }
 
+      const memCount = totalMembers || 1; 
+      
       res.json({
         totalMembers: memCount,
-        notApplied: notApplied,
-        notAppliedPct: Math.round((notApplied / memCount) * 100),
+        notApplied: 0,
+        notAppliedPct: 0,
         warnedUsers: uniqueWarnedUsers,
         warnedPct: Math.round((uniqueWarnedUsers / memCount) * 100),
         blacklisted: blacklisted,
