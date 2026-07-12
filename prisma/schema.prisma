@@ -1,0 +1,55 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model Settings {
+  id               String  @id @default(uuid())
+  guildId          String  @unique
+  welcomeChannel   String?
+  welcomeMessage   String?
+  autoRole         String?
+  logChannel       String?
+  appReviewChannel String?
+}
+
+model Command {
+  id       String @id @default(uuid())
+  name     String @unique
+  response String
+}
+
+model Warning {
+  id        String   @id @default(uuid())
+  userId    String
+  reason    String
+  timestamp DateTime @default(now())
+}
+
+model TicketTranscript {
+  id         String   @id @default(uuid())
+  ticketId   String
+  userId     String
+  transcript String
+  isArchived Boolean  @default(false)
+  timestamp  DateTime @default(now())
+}
+
+model Application {
+  id        String   @id @default(uuid())
+  userId    String
+  answers   String   // Store as JSON string
+  status    String   @default("pending") // pending, accepted, denied, blacklisted
+  timestamp DateTime @default(now())
+}
+
+model AppCooldown {
+  id        String   @id @default(uuid())
+  userId    String   @unique
+  expiresAt DateTime
+}
