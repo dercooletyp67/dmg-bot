@@ -9,7 +9,7 @@ module.exports = (client) => {
   app.use(express.static(path.join(__dirname, '../public')));
 
   const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'dmgadmin123';
-  const GUILD_ID = process.env.GUILD_ID || '1494354069605584896';
+  const GUILD_ID = process.env.GUILD_ID || '1423630012623491073';
 
   app.post('/api/auth', (req, res) => {
     if (req.body.password === ADMIN_PASSWORD) {
@@ -108,8 +108,8 @@ module.exports = (client) => {
 
   app.post('/api/alerts/territory', async (req, res) => {
     try {
-      const alertChannelId = '1524881806388625408';
-      const roleId = '1524884807522320528';
+      const alertChannelId = '1525895370901553285';
+      const roleId = '1525922040941510806';
       const channel = await client.channels.fetch(alertChannelId);
       if (channel) {
         await channel.send(`<@&${roleId}> our territory is getting attacked!`);
