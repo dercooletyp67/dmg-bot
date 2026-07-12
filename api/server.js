@@ -1,5 +1,7 @@
 const express = require('express');
 const path = require('path');
+const rateLimit = require('express-rate-limit');
+const { v4: uuidv4 } = require('uuid');
 const { prisma } = require('../database');
 
 module.exports = (client) => {
@@ -8,20 +10,34 @@ module.exports = (client) => {
   app.use(express.json());
   app.use(express.static(path.join(__dirname, '../public')));
 
-  const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'dmgadmin123';
+  const adminPasswords = process.env.ADMIN_PASSWORDS ? process.env.ADMIN_PASSWORDS.split(',') : [process.env.ADMIN_PASSWORD || 'dmgadmin123'];
   const GUILD_ID = process.env.GUILD_ID || '1423630012623491073';
+  const activeSessions = new Set();
 
-  app.post('/api/auth', (req, res) => {
-    if (req.body.password === ADMIN_PASSWORD) {
-      res.json({ success: true });
+  const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 5,
+    message: { error: 'Too many login attempts, please try again after 15 minutes' }
+  });
+
+  app.post('/api/auth', authLimiter, (req, res) => {
+    if (adminPasswords.includes(req.body.password)) {
+      const token = uuidv4();
+      activeSessions.add(token);
+      res.json({ success: true, token });
     } else {
       res.status(401).json({ success: false });
     }
   });
 
+  app.post('/api/logout', (req, res) => {
+     activeSessions.delete(req.headers.authorization);
+     res.json({ success: true });
+  });
+
   app.use('/api', (req, res, next) => {
     if (req.path === '/auth') return next();
-    if (req.headers.authorization === ADMIN_PASSWORD) return next();
+    if (activeSessions.has(req.headers.authorization)) return next();
     res.status(401).json({ error: 'Unauthorized' });
   });
 
