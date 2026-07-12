@@ -148,7 +148,7 @@ module.exports = function setupApplicationSystem(client) {
         await dmChannel.send('Thank you! Your application has been submitted for review.');
         
         const settings = await getSettings();
-        const reviewChannelId = settings.appReviewChannel || '1524881806388625408';
+        const reviewChannelId = settings.appReviewChannel || '1423724198546898954';
         
         try {
           const reviewChannel = await client.channels.fetch(reviewChannelId);
@@ -253,6 +253,17 @@ module.exports = function setupApplicationSystem(client) {
             try {
               await targetUser.send(dmMsg);
             } catch(e) { console.error('Could not DM applicant result'); }
+
+            try {
+              const guildMember = await interaction.guild.members.fetch(targetId);
+              if (guildMember) {
+                if (action === 'accept') {
+                  await guildMember.roles.add('1492563980072259718').catch(e => console.error('Failed to add accept role:', e));
+                } else if (action === 'blacklist') {
+                  await guildMember.roles.add('1430526946969780306').catch(e => console.error('Failed to add blacklist role:', e));
+                }
+              }
+            } catch(e) { console.error('Could not assign roles, user might not be in the server:', e); }
 
             const oldEmbed = EmbedBuilder.from(interaction.message.embeds[0]);
             oldEmbed.setColor(color);
