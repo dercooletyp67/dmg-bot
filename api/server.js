@@ -1,6 +1,6 @@
 const express = require('express');
 const path = require('path');
-const { Settings, Command, Warning, TicketTranscript, Application } = require('../database');
+const { prisma } = require('../database');
 
 module.exports = (client) => {
   const app = express();
@@ -27,24 +27,28 @@ module.exports = (client) => {
 
   // --- SETTINGS & COMMANDS ---
   app.get('/api/settings', async (req, res) => {
-    let doc = await Settings.findOne({ guildId: GUILD_ID });
-    if (!doc) doc = await Settings.create({ guildId: GUILD_ID });
+    let doc = await prisma.settings.findUnique({ where: { guildId: GUILD_ID } });
+    if (!doc) doc = await prisma.settings.create({ data: { guildId: GUILD_ID } });
     res.json(doc);
   });
   
   app.post('/api/settings', async (req, res) => {
-    await Settings.findOneAndUpdate({ guildId: GUILD_ID }, req.body, { upsert: true });
+    await prisma.settings.upsert({
+      where: { guildId: GUILD_ID },
+      update: req.body,
+      create: { guildId: GUILD_ID, ...req.body }
+    });
     res.json({success:true});
   });
 
   app.get('/api/commands', async (req, res) => {
-    const cmds = await Command.find({});
+    const cmds = await prisma.command.findMany({});
     res.json(cmds);
   });
   
   app.post('/api/commands', async (req, res) => {
     try {
-      await Command.create(req.body);
+      await prisma.command.create({ data: req.body });
       res.json({success:true});
     } catch(err) {
       res.status(400).json({error: 'Command already exists or invalid payload'});
@@ -52,12 +56,12 @@ module.exports = (client) => {
   });
   
   app.delete('/api/commands/:name', async (req, res) => {
-    await Command.deleteOne({ name: req.params.name });
+    await prisma.command.delete({ where: { name: req.params.name } }).catch(() => {});
     res.json({success:true});
   });
 
   app.get('/api/warnings', async (req, res) => {
-    const warnings = await Warning.find({});
+    const warnings = await prisma.warning.findMany({});
     const formatted = {};
     for (const w of warnings) {
       if (!formatted[w.userId]) formatted[w.userId] = [];
@@ -69,8 +73,10 @@ module.exports = (client) => {
   app.get('/api/tickets', async (req, res) => {
     try {
       const isArchived = req.query.archived === 'true';
-      const query = isArchived ? { isArchived: true } : { isArchived: { $ne: true } };
-      const tickets = await TicketTranscript.find(query).sort({ timestamp: -1 });
+      const tickets = await prisma.ticketTranscript.findMany({
+        where: { isArchived },
+        orderBy: { timestamp: 'desc' }
+      });
       res.json(tickets);
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -80,7 +86,10 @@ module.exports = (client) => {
   app.patch('/api/tickets/:id/archive', async (req, res) => {
     try {
       const { archived } = req.body;
-      await TicketTranscript.findByIdAndUpdate(req.params.id, { isArchived: archived });
+      await prisma.ticketTranscript.update({
+        where: { id: req.params.id },
+        data: { isArchived: archived }
+      });
       res.json({ success: true });
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -89,7 +98,7 @@ module.exports = (client) => {
 
   app.delete('/api/tickets/:id', async (req, res) => {
     try {
-      await TicketTranscript.findByIdAndDelete(req.params.id);
+      await prisma.ticketTranscript.delete({ where: { id: req.params.id } });
       res.json({ success: true });
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -98,8 +107,12 @@ module.exports = (client) => {
 
   app.get('/api/applications', async (req, res) => {
     try {
-      const applications = await Application.find().sort({ timestamp: -1 });
-      res.json(applications);
+      const applications = await prisma.application.findMany({ orderBy: { timestamp: 'desc' } });
+      const formatted = applications.map(app => ({
+        ...app,
+        answers: JSON.parse(app.answers)
+      }));
+      res.json(formatted);
     } catch (err) {
       console.error(err);
       res.status(500).json({ error: 'Failed to fetch applications' });
@@ -137,7 +150,7 @@ module.exports = (client) => {
       const guild = client.guilds.cache.first();
       const totalMembers = guild ? guild.memberCount : 0;
       
-      const warnings = await Warning.find({});
+      const warnings = await prisma.warning.findMany({});
       const uniqueWarnedUsers = new Set(warnings.map(w => w.userId)).size;
 
       const memCount = totalMembers || 150; 
