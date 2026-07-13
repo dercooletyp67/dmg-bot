@@ -83,11 +83,12 @@ function setupBot(io) {
     }
     const commands = [
       { name: 'ping', description: 'Replies with the bot latency!' },
-      { name: 'applypanel', description: 'Setup the DMG Application panel in the current channel' },
-      { name: 'ticketpanel', description: 'Setup the DMG Ticket panel in the current channel' },
+      { name: 'applypanel', description: 'Setup the DMG Application panel in the current channel', default_member_permissions: '8' },
+      { name: 'ticketpanel', description: 'Setup the DMG Ticket panel in the current channel', default_member_permissions: '8' },
       {
         name: 'warn',
         description: 'Warns a user in the server.',
+        default_member_permissions: '8',
         options: [
           { name: 'user', description: 'The user to warn', type: 6, required: true },
           { name: 'reason', description: 'The reason for the warning', type: 3, required: true },
@@ -97,6 +98,7 @@ function setupBot(io) {
       {
         name: 'view-warnings',
         description: 'View all warnings for a user.',
+        default_member_permissions: '8',
         options: [
           { name: 'user', description: 'The user to view warnings for', type: 6, required: true },
         ],
@@ -125,6 +127,7 @@ function setupBot(io) {
       {
         name: 'kick',
         description: 'Kicks a user from the server.',
+        default_member_permissions: '8',
         options: [
           { name: 'user', description: 'The user to kick', type: 6, required: true },
           { name: 'reason', description: 'The reason for the kick', type: 3, required: false },
@@ -133,6 +136,7 @@ function setupBot(io) {
       {
         name: 'ban',
         description: 'Bans a user from the server.',
+        default_member_permissions: '8',
         options: [
           { name: 'user', description: 'The user to ban', type: 6, required: true },
           { name: 'reason', description: 'The reason for the ban', type: 3, required: false },
