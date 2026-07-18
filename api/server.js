@@ -54,6 +54,12 @@ module.exports = (client) => {
       update: req.body,
       create: { guildId: GUILD_ID, ...req.body }
     });
+    
+    if (req.body.memberlistChannel !== undefined) {
+       const { updateMemberlistEmbed } = require('../bot/memberlistSystem');
+       await updateMemberlistEmbed(client);
+    }
+    
     res.json({success:true});
   });
 
@@ -367,6 +373,36 @@ module.exports = (client) => {
       }
 
       await msg.edit(editPayload);
+      res.json({ success: true });
+    } catch (err) { res.status(500).json({error: err.message}); }
+  });
+
+  app.get('/api/memberlist', async (req, res) => {
+    try {
+      const members = await prisma.memberlist.findMany({ orderBy: { inGameName: 'asc' } });
+      res.json(members);
+    } catch (err) { res.status(500).json({error: err.message}); }
+  });
+
+  app.post('/api/memberlist', async (req, res) => {
+    try {
+      const { userId, userTag, inGameName } = req.body;
+      const member = await prisma.memberlist.upsert({
+        where: { userId },
+        update: { inGameName, userTag },
+        create: { userId, inGameName, userTag }
+      });
+      const { updateMemberlistEmbed } = require('../bot/memberlistSystem');
+      await updateMemberlistEmbed(client);
+      res.json(member);
+    } catch (err) { res.status(500).json({error: err.message}); }
+  });
+
+  app.delete('/api/memberlist/:id', async (req, res) => {
+    try {
+      await prisma.memberlist.delete({ where: { userId: req.params.id } });
+      const { updateMemberlistEmbed } = require('../bot/memberlistSystem');
+      await updateMemberlistEmbed(client);
       res.json({ success: true });
     } catch (err) { res.status(500).json({error: err.message}); }
   });
