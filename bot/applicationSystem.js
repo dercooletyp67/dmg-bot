@@ -255,6 +255,30 @@ module.exports = function setupApplicationSystem(client) {
 
             try {
               await targetUser.send(dmMsg);
+              if (action === 'accept') {
+                (async () => {
+                  try {
+                    await targetUser.send('Please reply to this message with your exact in-game name (e.g. `duck DMG`) so we can add you to the official memberlist!');
+                    const filter = m => m.author.id === targetUser.id;
+                    const dmChannel = await targetUser.createDM();
+                    const collected = await dmChannel.awaitMessages({ filter, max: 1, time: 24 * 60 * 60 * 1000, errors: ['time'] });
+                    const ign = collected.first().content;
+                    
+                    await prisma.memberlist.upsert({
+                      where: { userId: targetUser.id },
+                      update: { inGameName: ign, userTag: targetUser.tag },
+                      create: { userId: targetUser.id, inGameName: ign, userTag: targetUser.tag }
+                    });
+                    
+                    await targetUser.send(`Awesome! You have been added to the Memberlist as **${ign}**!`);
+                    
+                    const { updateMemberlistEmbed } = require('./memberlistSystem');
+                    await updateMemberlistEmbed(client);
+                  } catch (e) {
+                    console.error('Memberlist IGN prompt failed:', e);
+                  }
+                })();
+              }
             } catch(e) { console.error('Could not DM applicant result'); }
 
             try {
