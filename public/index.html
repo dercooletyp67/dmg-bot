@@ -205,6 +205,20 @@
           <button onclick="addMemberManual()" class="btn-primary" style="padding: 10px 20px;">Add Member</button>
         </div>
       </div>
+
+      <div class="card" style="padding: 1.5rem; margin-bottom: 2rem; background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.3);">
+        <h3 style="margin-top:0; color:#38bdf8; display:flex; align-items:center; gap:8px;">
+          <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" fill="none" stroke-width="2"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.59-9.21l5.25 5.25"/></svg>
+          Auto-Sync from Discord Role
+        </h3>
+        <p style="font-size:0.85rem; color:#94a3b8; margin-bottom: 1rem;">Select your "Member" role. The bot will automatically fetch everyone with this role, use their Server Nickname as their In-Game Name, and instantly populate the memberlist! <b>(Warning: This will overwrite your current list!)</b></p>
+        <div style="display:flex; gap:1rem;">
+          <select id="sync-member-role" style="flex:1; padding:10px; background:rgba(0,0,0,0.3); border:1px solid rgba(255,255,255,0.1); color:white; border-radius:8px;">
+            <option value="">Loading roles...</option>
+          </select>
+          <button onclick="syncMembersFromRole()" id="sync-btn" class="btn-primary" style="padding: 10px 20px; background: #38bdf8; color: #0f172a;">Sync Members</button>
+        </div>
+      </div>
       
       <div id="in-game-members-list" style="display: flex; flex-direction: column; gap: 0.5rem;">
         <div style="color: #64748b;">Loading memberlist...</div>

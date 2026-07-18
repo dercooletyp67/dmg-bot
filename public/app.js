@@ -165,6 +165,11 @@ function switchTab(tabId) {
         if(s.memberlistChannel) select.value = s.memberlistChannel;
       });
     });
+    // Populate roles for auto-sync
+    apiFetch('/api/guild/roles').then(r => r.json()).then(roles => {
+      const rSelect = document.getElementById('sync-member-role');
+      rSelect.innerHTML = '<option value="">Select a Member Role...</option>' + roles.filter(r => r.name !== '@everyone' && !r.managed).map(r => `<option value="${r.id}">${r.name}</option>`).join('');
+    });
   } else if (tabId === 'settings') {
     loadSettings();
   }
@@ -350,6 +355,38 @@ async function removeMemberManual(userId) {
     loadInGameMembers();
   } else {
     alert('Failed to remove member.');
+  }
+}
+
+async function syncMembersFromRole() {
+  const roleId = document.getElementById('sync-member-role').value;
+  if (!roleId) return alert('Please select a role first!');
+  
+  if (!confirm('WARNING: This will completely replace your current memberlist with the members who have this role. Are you sure you want to proceed?')) return;
+  
+  const btn = document.getElementById('sync-btn');
+  btn.innerText = 'Syncing...';
+  btn.disabled = true;
+  
+  try {
+    const res = await apiFetch('/api/memberlist/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ roleId })
+    });
+    
+    if (res.ok) {
+      const data = await res.json();
+      alert(`Success! Successfully synced ${data.count} members.`);
+      loadInGameMembers();
+    } else {
+      alert('Failed to sync members. Ensure the bot is running and try again.');
+    }
+  } catch (e) {
+    alert('An error occurred during sync.');
+  } finally {
+    btn.innerText = 'Sync Members';
+    btn.disabled = false;
   }
 }
 
