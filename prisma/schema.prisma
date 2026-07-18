@@ -16,6 +16,16 @@ model Settings {
   autoRole         String?
   logChannel       String?
   appReviewChannel String?
+  memberlistChannel String?
+  memberlistMessage String?
+}
+
+model Memberlist {
+  id         String   @id @default(uuid())
+  userId     String   @unique
+  userTag    String
+  inGameName String
+  addedAt    DateTime @default(now())
 }
 
 model Command {
