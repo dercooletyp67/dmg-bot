@@ -407,5 +407,32 @@ module.exports = (client) => {
     } catch (err) { res.status(500).json({error: err.message}); }
   });
 
+  app.post('/api/memberlist/sync', async (req, res) => {
+    try {
+      const { roleId } = req.body;
+      const guild = client.guilds.cache.first();
+      if (!guild) return res.status(500).json({error: 'Guild not found'});
+      
+      await guild.members.fetch();
+      const membersWithRole = guild.members.cache.filter(m => m.roles.cache.has(roleId));
+      
+      const insertData = membersWithRole.map(m => ({
+        userId: m.id,
+        userTag: m.user.tag,
+        inGameName: m.nickname || m.user.displayName || m.user.username
+      }));
+
+      await prisma.memberlist.deleteMany({});
+      if (insertData.length > 0) {
+        await prisma.memberlist.createMany({ data: insertData });
+      }
+
+      const { updateMemberlistEmbed } = require('../bot/memberlistSystem');
+      await updateMemberlistEmbed(client);
+      
+      res.json({ success: true, count: insertData.length });
+    } catch (err) { res.status(500).json({error: err.message}); }
+  });
+
   return app;
 };
