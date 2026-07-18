@@ -155,6 +155,16 @@ function switchTab(tabId) {
     loadTickets();
   } else if (tabId === 'applications') {
     loadApplications();
+  } else if (tabId === 'memberlist') {
+    loadInGameMembers();
+    // Populate the channels dropdown for the memberlist setting
+    apiFetch('/api/guild/channels').then(res => res.json()).then(channels => {
+      const select = document.getElementById('set-memberlist-channel');
+      select.innerHTML = '<option value="">None</option>' + channels.filter(c => c.type === 0).map(c => `<option value="${c.id}">#${c.name}</option>`).join('');
+      apiFetch('/api/settings').then(r => r.json()).then(s => {
+        if(s.memberlistChannel) select.value = s.memberlistChannel;
+      });
+    });
   } else if (tabId === 'settings') {
     loadSettings();
   }
@@ -279,7 +289,80 @@ async function loadOverview() {
   } catch (e) { console.error(e); }
 }
 
-// SERVER MANAGEMENT FUNCTIONS
+// IN-GAME MEMBERLIST MANAGEMENT
+async function loadInGameMembers() {
+  try {
+    const list = document.getElementById('in-game-members-list');
+    list.innerHTML = '<div style="color:#64748b;">Loading memberlist...</div>';
+    const res = await apiFetch('/api/memberlist');
+    const members = await res.json();
+    
+    if (members.length === 0) {
+      list.innerHTML = '<div style="color:#64748b; padding:1rem; text-align:center;">The memberlist is empty.</div>';
+      return;
+    }
+    
+    list.innerHTML = members.map((m, index) => `
+      <div style="display:flex; justify-content:space-between; align-items:center; background:rgba(30, 41, 59, 0.4); padding:12px 16px; border-radius:8px; border:1px solid rgba(255,255,255,0.05);">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <span style="color:#94a3b8; font-weight:bold; width:24px;">${index + 1}.</span>
+          <span style="font-weight:600; color:#f8fafc; font-size:1.05rem;">${m.inGameName}</span>
+          <span style="color:#64748b; font-size:0.9rem;">— ${m.userTag} (${m.userId})</span>
+        </div>
+        <button onclick="removeMemberManual('${m.userId}')" class="btn-primary" style="background:#ef4444; padding:6px 12px; font-size:0.85rem;">Remove</button>
+      </div>
+    `).join('');
+  } catch(e) {
+    document.getElementById('in-game-members-list').innerHTML = `<div style="color:#ef4444;">Failed to load memberlist.</div>`;
+  }
+}
+
+async function addMemberManual() {
+  const userId = document.getElementById('add-member-id').value.trim();
+  const userTag = document.getElementById('add-member-tag').value.trim();
+  const inGameName = document.getElementById('add-member-ign').value.trim();
+  
+  if (!userId || !userTag || !inGameName) {
+    alert('Please fill out all fields (User ID, Discord Tag, and In-Game Name).');
+    return;
+  }
+  
+  const res = await apiFetch('/api/memberlist', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ userId, userTag, inGameName })
+  });
+  
+  if (res.ok) {
+    document.getElementById('add-member-id').value = '';
+    document.getElementById('add-member-tag').value = '';
+    document.getElementById('add-member-ign').value = '';
+    loadInGameMembers();
+  } else {
+    alert('Failed to add member.');
+  }
+}
+
+async function removeMemberManual(userId) {
+  if (!confirm('Are you sure you want to remove this member from the in-game memberlist?')) return;
+  const res = await apiFetch(`/api/memberlist/${userId}`, { method: 'DELETE' });
+  if (res.ok) {
+    loadInGameMembers();
+  } else {
+    alert('Failed to remove member.');
+  }
+}
+
+async function saveMemberlistChannel() {
+  const val = document.getElementById('set-memberlist-channel').value;
+  await apiFetch('/api/settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ memberlistChannel: val || null })
+  });
+}
+
+// SETTINGS MANAGEMENT FUNCTIONS
 async function loadServerData() {
   loadChannels();
   loadRoles();
