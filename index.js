@@ -13,7 +13,7 @@ const io = new Server(server, {
 });
 
 const client = setupBot(io);
-const apiApp = createServer(client);
+const apiApp = createServer(client, io);
 
 // Mount the API app
 app.use(apiApp);

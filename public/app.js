@@ -4,34 +4,79 @@ let socket = null;
 
 let isEmbedOpen = false;
 
-(function handleOAuthRedirect() {
+// Any of this text can come from Discord users (messages, nicknames, role names, etc.),
+// so it must never be trusted before landing in innerHTML.
+function escapeHtml(str) {
+  return String(str ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// For untrusted values embedded inside onclick="fn('...')" attributes: JS-escapes
+// quotes/backslashes first, then HTML-escapes the attribute boundary itself, so the
+// value can't break out of either the JS string literal or the HTML attribute.
+function escapeJsAttr(str) {
+  const jsEscaped = String(str ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\r?\n/g, '\\n');
+  return escapeHtml(jsEscaped);
+}
+
+function showLoginError(authError) {
+  const messages = {
+    state: 'Login session expired. Please try again.',
+    token: 'Discord rejected the login request. Please try again.',
+    profile: 'Could not verify your Discord account. Please try again.',
+    not_member: 'You must be a member of the DMG Discord server to access this dashboard.',
+    forbidden: 'Your Discord account does not have permission to access this dashboard.',
+    server: 'Something went wrong during login. Please try again.',
+    exchange: 'Login expired before it could complete. Please try again.'
+  };
+  const errEl = document.getElementById('login-err');
+  errEl.textContent = messages[authError] || 'Login failed. Please try again.';
+  errEl.style.display = 'block';
+}
+
+function enterDashboard() {
+  document.getElementById('login-overlay').style.display = 'none';
+  document.getElementById('main-app').style.display = 'flex';
+  initSocket();
+  loadOverview();
+  loadSession();
+}
+
+// Handle the redirect back from Discord: the callback hands us a short-lived,
+// single-use handoff code (not the real session token) via the URL, so the
+// actual token never has to sit in server access logs or browser history.
+async function handleOAuthRedirect() {
   const params = new URLSearchParams(window.location.search);
-  const urlToken = params.get('token');
+  const handoffCode = params.get('code');
   const authError = params.get('authError');
 
-  if (urlToken) {
-    sessionToken = urlToken;
-    localStorage.setItem('dmg_admin_token', sessionToken);
-  }
-
-  if (urlToken || authError) {
+  if (handoffCode || authError) {
     window.history.replaceState({}, document.title, window.location.pathname);
   }
 
   if (authError) {
-    const messages = {
-      state: 'Login session expired. Please try again.',
-      token: 'Discord rejected the login request. Please try again.',
-      profile: 'Could not verify your Discord account. Please try again.',
-      not_member: 'You must be a member of the DMG Discord server to access this dashboard.',
-      forbidden: 'Your Discord account does not have permission to access this dashboard.',
-      server: 'Something went wrong during login. Please try again.'
-    };
-    const errEl = document.getElementById('login-err');
-    errEl.textContent = messages[authError] || 'Login failed. Please try again.';
-    errEl.style.display = 'block';
+    showLoginError(authError);
+    return;
   }
-})();
+
+  if (handoffCode) {
+    try {
+      const res = await fetch(`/api/auth/exchange?code=${encodeURIComponent(handoffCode)}`);
+      if (!res.ok) { showLoginError('exchange'); return; }
+      const data = await res.json();
+      sessionToken = data.token;
+      localStorage.setItem('dmg_admin_token', sessionToken);
+      enterDashboard();
+      return;
+    } catch (e) {
+      showLoginError('exchange');
+      return;
+    }
+  }
+
+  checkExistingSession();
+}
+
+handleOAuthRedirect();
 
 async function loadSession() {
   try {
@@ -42,7 +87,7 @@ async function loadSession() {
     document.getElementById('brand-name').innerText = session.tag;
     document.getElementById('brand-sub').innerText = 'Signed in with Discord';
     const mark = document.getElementById('brand-mark');
-    mark.innerHTML = `<img src="${session.avatar}" style="width:100%; height:100%; object-fit:cover;">`;
+    mark.innerHTML = `<img src="${escapeHtml(session.avatar)}" style="width:100%; height:100%; object-fit:cover;">`;
   } catch (e) {}
 }
 
@@ -50,32 +95,35 @@ function buildMessageHtml(m, channelId) {
   let embedHtml = '';
   if (m.embeds && m.embeds.length > 0) {
     const e = m.embeds[0];
+    const safeColor = /^#[0-9a-fA-F]{3,8}$/.test(e.color || '') ? e.color : '#38bdf8';
     embedHtml = `
-      <div style="border-left: 4px solid ${e.color || '#38bdf8'}; background:rgba(0,0,0,0.2); padding:10px; margin-top:8px; border-radius:4px;">
-        ${e.title ? `<div style="font-weight:bold; margin-bottom:4px; color:#38bdf8;">${e.title}</div>` : ''}
-        ${e.description ? `<div style="font-size:0.9rem; margin-bottom:4px; white-space:pre-wrap;">${e.description}</div>` : ''}
-        ${e.footer ? `<div style="font-size:0.7rem; color:#64748b;">${e.footer}</div>` : ''}
+      <div style="border-left: 4px solid ${safeColor}; background:rgba(0,0,0,0.2); padding:10px; margin-top:8px; border-radius:4px;">
+        ${e.title ? `<div style="font-weight:bold; margin-bottom:4px; color:#38bdf8;">${escapeHtml(e.title)}</div>` : ''}
+        ${e.description ? `<div style="font-size:0.9rem; margin-bottom:4px; white-space:pre-wrap;">${escapeHtml(e.description)}</div>` : ''}
+        ${e.footer ? `<div style="font-size:0.7rem; color:#64748b;">${escapeHtml(e.footer)}</div>` : ''}
       </div>
     `;
   }
 
   const isBot = m.bot;
-  
+  const safeChannelId = escapeJsAttr(channelId);
+  const safeMsgId = escapeJsAttr(m.id);
+
   return `
-    <div class="msg-box" id="msg-${m.id}">
-      <img src="${m.avatar || 'https://cdn.discordapp.com/embed/avatars/0.png'}" class="msg-avatar">
+    <div class="msg-box" id="msg-${escapeHtml(m.id)}">
+      <img src="${escapeHtml(m.avatar || 'https://cdn.discordapp.com/embed/avatars/0.png')}" class="msg-avatar">
       <div class="msg-content">
         <div class="msg-header">
-          <span class="msg-author">${m.author}</span>
+          <span class="msg-author">${escapeHtml(m.author)}</span>
           ${m.bot ? '<span class="msg-bot-tag">BOT</span>' : ''}
           <span class="msg-time">${new Date(m.timestamp).toLocaleTimeString()}</span>
         </div>
-        <div class="msg-text">${m.content}</div>
+        <div class="msg-text">${escapeHtml(m.content)}</div>
         ${embedHtml}
       </div>
       <div class="msg-actions">
-        ${isBot ? `<button class="msg-btn" onclick="editMessage('${channelId}', '${m.id}')" title="Edit"><svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg></button>` : ''}
-        <button class="msg-btn" onclick="deleteMessage('${channelId}', '${m.id}')" title="Delete"><svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg></button>
+        ${isBot ? `<button class="msg-btn" onclick="editMessage('${safeChannelId}', '${safeMsgId}')" title="Edit"><svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg></button>` : ''}
+        <button class="msg-btn" onclick="deleteMessage('${safeChannelId}', '${safeMsgId}')" title="Delete"><svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg></button>
       </div>
     </div>
   `;
@@ -83,7 +131,7 @@ function buildMessageHtml(m, channelId) {
 
 function initSocket() {
   if (socket) return;
-  socket = io();
+  socket = io({ auth: { token: sessionToken } });
   
   socket.on('newMessage', (data) => {
     if (activeChannelId === data.channelId) {
@@ -142,19 +190,14 @@ async function apiFetch(url, options = {}) {
   return res;
 }
 
-// Check initial auth state
-if (!sessionToken) {
-  document.getElementById('login-overlay').style.display = 'flex';
-} else {
+function checkExistingSession() {
+  if (!sessionToken) {
+    document.getElementById('login-overlay').style.display = 'flex';
+    return;
+  }
   apiFetch('/api/stats')
     .then(res => {
-      if (res.ok) {
-        document.getElementById('login-overlay').style.display = 'none';
-        document.getElementById('main-app').style.display = 'flex';
-        initSocket();
-        loadOverview();
-        loadSession();
-      }
+      if (res.ok) enterDashboard();
     }).catch(() => {});
 }
 
@@ -179,7 +222,7 @@ function switchTab(tabId) {
     // Populate the channels dropdown for the memberlist setting
     apiFetch('/api/guild/channels').then(res => res.json()).then(channels => {
       const select = document.getElementById('set-memberlist-channel');
-      select.innerHTML = '<option value="">None</option>' + channels.filter(c => c.type === 0).map(c => `<option value="${c.id}">#${c.name}</option>`).join('');
+      select.innerHTML = '<option value="">None</option>' + channels.filter(c => c.type === 0).map(c => `<option value="${escapeHtml(c.id)}">#${escapeHtml(c.name)}</option>`).join('');
       apiFetch('/api/settings').then(r => r.json()).then(s => {
         if(s.memberlistChannel) select.value = s.memberlistChannel;
       });
@@ -187,7 +230,7 @@ function switchTab(tabId) {
     // Populate roles for auto-sync
     apiFetch('/api/guild/roles').then(r => r.json()).then(roles => {
       const rSelect = document.getElementById('sync-member-role');
-      rSelect.innerHTML = '<option value="">Select a Member Role...</option>' + roles.filter(r => r.name !== '@everyone' && !r.managed).map(r => `<option value="${r.id}">${r.name}</option>`).join('');
+      rSelect.innerHTML = '<option value="">Select a Member Role...</option>' + roles.filter(r => r.name !== '@everyone' && !r.managed).map(r => `<option value="${escapeHtml(r.id)}">${escapeHtml(r.name)}</option>`).join('');
     });
   } else if (tabId === 'settings') {
     loadSettings();
@@ -246,17 +289,17 @@ function renderApplications() {
      div.style.position = 'relative';
      
      div.innerHTML = `
-        <h3 style="margin: 0 0 10px 0; font-size: 1.1rem; color: #fff;">${app.userTag || 'Unknown User'}</h3>
-        <p style="margin: 0 0 5px 0; font-size: 0.85rem; color: #94a3b8;">User ID: ${app.userId}</p>
+        <h3 style="margin: 0 0 10px 0; font-size: 1.1rem; color: #fff;">${escapeHtml(app.userTag) || 'Unknown User'}</h3>
+        <p style="margin: 0 0 5px 0; font-size: 0.85rem; color: #94a3b8;">User ID: ${escapeHtml(app.userId)}</p>
         <div style="display: flex; gap: 10px; margin-bottom: 15px;">
-           <span class="badge" style="background: ${color}20; color: ${color}; padding: 4px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: bold;">${app.status}</span>
+           <span class="badge" style="background: ${color}20; color: ${color}; padding: 4px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: bold;">${escapeHtml(app.status)}</span>
            ${app.plagiarism ? '<span class="badge" style="background: rgba(239, 68, 68, 0.2); color: #ef4444; padding: 4px 8px; border-radius: 4px; font-size: 0.75rem;">⚠️ PLAGIARISM FLAG</span>' : ''}
         </div>
         <div style="font-size: 0.85rem; color: #cbd5e1; margin-bottom: 15px;">
-           <div><strong>AI Usage:</strong> ~${app.aiScore || 0}%</div>
-           <div><strong>Time Taken:</strong> ${app.timeTaken || 'Unknown'}</div>
-           ${app.reason ? `<div style="margin-top: 5px;"><strong>Reason:</strong> ${app.reason}</div>` : ''}
-           ${app.processedBy ? `<div><strong>Processed By:</strong> ${app.processedBy}</div>` : ''}
+           <div><strong>AI Usage:</strong> ~${escapeHtml(app.aiScore || 0)}%</div>
+           <div><strong>Time Taken:</strong> ${escapeHtml(app.timeTaken || 'Unknown')}</div>
+           ${app.reason ? `<div style="margin-top: 5px;"><strong>Reason:</strong> ${escapeHtml(app.reason)}</div>` : ''}
+           ${app.processedBy ? `<div><strong>Processed By:</strong> ${escapeHtml(app.processedBy)}</div>` : ''}
         </div>
         <div style="font-size: 0.8rem; color: #64748b;">Submitted: ${new Date(app.timestamp).toLocaleString()}</div>
      `;
@@ -306,8 +349,8 @@ async function loadOverview() {
       } catch (e) {}
 
       const card = document.createElement('div'); card.className = 'card';
-      const warningHtml = userWarns.map(w => `<li class="warning-item">${w.reason}<span class="warning-date">${new Date(w.timestamp).toLocaleString()}</span></li>`).join('');
-      card.innerHTML = `<div class="user-info"><img src="${userData.avatar}" class="avatar"><div class="user-details"><h3>${userData.tag}</h3><span class="badge">${userWarns.length} Warning(s)</span></div></div><ul class="warning-list">${warningHtml}</ul>`;
+      const warningHtml = userWarns.map(w => `<li class="warning-item">${escapeHtml(w.reason)}<span class="warning-date">${new Date(w.timestamp).toLocaleString()}</span></li>`).join('');
+      card.innerHTML = `<div class="user-info"><img src="${escapeHtml(userData.avatar)}" class="avatar"><div class="user-details"><h3>${escapeHtml(userData.tag)}</h3><span class="badge">${userWarns.length} Warning(s)</span></div></div><ul class="warning-list">${warningHtml}</ul>`;
       dashboard.appendChild(card);
     }
   } catch (e) { console.error(e); }
@@ -330,10 +373,10 @@ async function loadInGameMembers() {
       <div style="display:flex; justify-content:space-between; align-items:center; background:rgba(30, 41, 59, 0.4); padding:12px 16px; border-radius:8px; border:1px solid rgba(255,255,255,0.05);">
         <div style="display:flex; align-items:center; gap:10px;">
           <span style="color:#94a3b8; font-weight:bold; width:24px;">${index + 1}.</span>
-          <span style="font-weight:600; color:#f8fafc; font-size:1.05rem;">${m.inGameName}</span>
-          <span style="color:#64748b; font-size:0.9rem;">— ${m.userTag} (${m.userId})</span>
+          <span style="font-weight:600; color:#f8fafc; font-size:1.05rem;">${escapeHtml(m.inGameName)}</span>
+          <span style="color:#64748b; font-size:0.9rem;">— ${escapeHtml(m.userTag)} (${escapeHtml(m.userId)})</span>
         </div>
-        <button onclick="removeMemberManual('${m.userId}')" class="btn-primary" style="background:#ef4444; padding:6px 12px; font-size:0.85rem;">Remove</button>
+        <button onclick="removeMemberManual('${escapeJsAttr(m.userId)}')" class="btn-primary" style="background:#ef4444; padding:6px 12px; font-size:0.85rem;">Remove</button>
       </div>
     `).join('');
   } catch(e) {
@@ -431,23 +474,25 @@ async function loadChannels() {
   container.innerHTML = '';
   
   channels.filter(c => c.type === 4).forEach(cat => {
-    container.innerHTML += `<div style="font-size:0.75rem; font-weight:700; color:#64748b; margin-top:1rem; margin-bottom:4px; text-transform:uppercase;">${cat.name}</div>`;
+    container.innerHTML += `<div style="font-size:0.75rem; font-weight:700; color:#64748b; margin-top:1rem; margin-bottom:4px; text-transform:uppercase;">${escapeHtml(cat.name)}</div>`;
     channels.filter(c => c.parentId === cat.id && c.type === 0).forEach(ch => {
-      container.innerHTML += `<div class="chan-item" onclick="selectChannel('${ch.id}', '${ch.name}')" id="chan-${ch.id}" style="display:flex; justify-content:space-between; align-items:center;">
-        <div><svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" style="margin-right:4px;"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg> ${ch.name}</div>
+      const safeId = escapeJsAttr(ch.id), safeName = escapeJsAttr(ch.name);
+      container.innerHTML += `<div class="chan-item" onclick="selectChannel('${safeId}', '${safeName}')" id="chan-${escapeHtml(ch.id)}" style="display:flex; justify-content:space-between; align-items:center;">
+        <div><svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" style="margin-right:4px;"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg> ${escapeHtml(ch.name)}</div>
         <div style="display:flex; gap:6px; font-size:12px;">
-          <span onclick="event.stopPropagation(); renameChannel('${ch.id}', '${ch.name}')" style="cursor:pointer; display:flex; align-items:center;" title="Rename"><svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg></span>
-          <span onclick="event.stopPropagation(); deleteChannel('${ch.id}', '${ch.name}')" style="cursor:pointer; display:flex; align-items:center;" title="Delete"><svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg></span>
+          <span onclick="event.stopPropagation(); renameChannel('${safeId}', '${safeName}')" style="cursor:pointer; display:flex; align-items:center;" title="Rename"><svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg></span>
+          <span onclick="event.stopPropagation(); deleteChannel('${safeId}', '${safeName}')" style="cursor:pointer; display:flex; align-items:center;" title="Delete"><svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg></span>
         </div>
       </div>`;
     });
   });
   channels.filter(c => !c.parentId && c.type === 0).forEach(ch => {
-    container.innerHTML += `<div class="chan-item" onclick="selectChannel('${ch.id}', '${ch.name}')" id="chan-${ch.id}" style="display:flex; justify-content:space-between; align-items:center;">
-        <div><svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" style="margin-right:4px;"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg> ${ch.name}</div>
+    const safeId = escapeJsAttr(ch.id), safeName = escapeJsAttr(ch.name);
+    container.innerHTML += `<div class="chan-item" onclick="selectChannel('${safeId}', '${safeName}')" id="chan-${escapeHtml(ch.id)}" style="display:flex; justify-content:space-between; align-items:center;">
+        <div><svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" style="margin-right:4px;"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg> ${escapeHtml(ch.name)}</div>
         <div style="display:flex; gap:6px; font-size:12px;">
-          <span onclick="event.stopPropagation(); renameChannel('${ch.id}', '${ch.name}')" style="cursor:pointer; display:flex; align-items:center;" title="Rename"><svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg></span>
-          <span onclick="event.stopPropagation(); deleteChannel('${ch.id}', '${ch.name}')" style="cursor:pointer; display:flex; align-items:center;" title="Delete"><svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg></span>
+          <span onclick="event.stopPropagation(); renameChannel('${safeId}', '${safeName}')" style="cursor:pointer; display:flex; align-items:center;" title="Rename"><svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg></span>
+          <span onclick="event.stopPropagation(); deleteChannel('${safeId}', '${safeName}')" style="cursor:pointer; display:flex; align-items:center;" title="Delete"><svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg></span>
         </div>
       </div>`;
   });
@@ -457,11 +502,11 @@ async function loadRoles() {
   const res = await apiFetch('/api/guild/roles');
   const roles = await res.json();
   const container = document.getElementById('sm-roles');
-  container.innerHTML = roles.filter(r => r.name !== '@everyone').map(r => 
+  container.innerHTML = roles.filter(r => r.name !== '@everyone').map(r =>
     `<div class="role-badge" style="display:inline-flex; align-items:center;">
-       <div class="role-color" style="background:${r.color==='#000000'?'#64748b':r.color}"></div>
-       ${r.name}
-       <span onclick="deleteRole('${r.id}', '${r.name}')" style="margin-left:6px; cursor:pointer; color:#ef4444;" title="Delete"><svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" stroke-width="2" fill="none"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg></span>
+       <div class="role-color" style="background:${/^#[0-9a-fA-F]{6}$/.test(r.color) && r.color !== '#000000' ? r.color : '#64748b'}"></div>
+       ${escapeHtml(r.name)}
+       <span onclick="deleteRole('${escapeJsAttr(r.id)}', '${escapeJsAttr(r.name)}')" style="margin-left:6px; cursor:pointer; color:#ef4444;" title="Delete"><svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" stroke-width="2" fill="none"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg></span>
      </div>`
   ).join('');
 }
@@ -621,27 +666,30 @@ async function loadMembers() {
       throw new Error(members.error || 'API returned non-array data');
     }
     
-    list.innerHTML = members.map(m => `
+    list.innerHTML = members.map(m => {
+      const safeId = escapeJsAttr(m.id), safeTag = escapeJsAttr(m.tag);
+      return `
       <div class="card" style="padding: 1.5rem;">
         <div class="user-info">
-          <img src="${m.avatar || 'https://cdn.discordapp.com/embed/avatars/0.png'}" class="avatar">
+          <img src="${escapeHtml(m.avatar || 'https://cdn.discordapp.com/embed/avatars/0.png')}" class="avatar">
           <div class="user-details">
-            <h3>${m.tag}</h3>
+            <h3>${escapeHtml(m.tag)}</h3>
             <div style="font-size:0.75rem; color:#64748b; margin-top:4px;">Joined: ${new Date(m.joinedAt).toLocaleDateString()}</div>
           </div>
         </div>
         <div style="margin-top:1rem; display:flex; flex-wrap:wrap; gap:6px;">
-          ${m.roles.filter(r => r.name !== '@everyone').map(r => `<span class="role-badge" style="font-size:0.7rem;"><div class="role-color" style="background:${r.color==='#000000'?'#64748b':r.color}"></div>${r.name}</span>`).join('')}
+          ${m.roles.filter(r => r.name !== '@everyone').map(r => `<span class="role-badge" style="font-size:0.7rem;"><div class="role-color" style="background:${/^#[0-9a-fA-F]{6}$/.test(r.color) && r.color !== '#000000' ? r.color : '#64748b'}"></div>${escapeHtml(r.name)}</span>`).join('')}
         </div>
         <div style="margin-top:1.5rem; display:flex; gap:10px;">
-          <button onclick="manageMemberRoles('${m.id}', '${m.tag}')" style="flex:1; background:rgba(56,189,248,0.1); color:#38bdf8; border:1px solid rgba(56,189,248,0.2); padding:0.5rem; border-radius:8px; cursor:pointer; font-weight:600;">Roles</button>
-          <button onclick="kickMember('${m.id}', '${m.tag}')" style="flex:1; background:rgba(245,158,11,0.1); color:#f59e0b; border:1px solid rgba(245,158,11,0.2); padding:0.5rem; border-radius:8px; cursor:pointer; font-weight:600;">Kick</button>
-          <button onclick="banMember('${m.id}', '${m.tag}')" style="flex:1; background:rgba(239,68,68,0.1); color:#ef4444; border:1px solid rgba(239,68,68,0.2); padding:0.5rem; border-radius:8px; cursor:pointer; font-weight:600;">Ban</button>
+          <button onclick="manageMemberRoles('${safeId}', '${safeTag}')" style="flex:1; background:rgba(56,189,248,0.1); color:#38bdf8; border:1px solid rgba(56,189,248,0.2); padding:0.5rem; border-radius:8px; cursor:pointer; font-weight:600;">Roles</button>
+          <button onclick="kickMember('${safeId}', '${safeTag}')" style="flex:1; background:rgba(245,158,11,0.1); color:#f59e0b; border:1px solid rgba(245,158,11,0.2); padding:0.5rem; border-radius:8px; cursor:pointer; font-weight:600;">Kick</button>
+          <button onclick="banMember('${safeId}', '${safeTag}')" style="flex:1; background:rgba(239,68,68,0.1); color:#ef4444; border:1px solid rgba(239,68,68,0.2); padding:0.5rem; border-radius:8px; cursor:pointer; font-weight:600;">Ban</button>
         </div>
       </div>
-    `).join('');
+    `;
+    }).join('');
   } catch (err) {
-    list.innerHTML = `<div style="color: #ef4444;">Failed to load members: ${err.message}</div>`;
+    list.innerHTML = `<div style="color: #ef4444;">Failed to load members: ${escapeHtml(err.message)}</div>`;
   }
 }
 
@@ -682,16 +730,16 @@ async function manageMemberRoles(memberId, tag) {
     const hasRole = currentRoleIds.includes(r.id);
     return `
       <label style="display:flex; align-items:center; gap:8px; background:rgba(255,255,255,0.05); padding:8px; border-radius:4px; cursor:pointer;">
-        <input type="checkbox" value="${r.id}" ${hasRole ? 'checked' : ''}>
-        <div class="role-color" style="background:${r.color==='#000000'?'#64748b':r.color}"></div>
-        <span>${r.name}</span>
+        <input type="checkbox" value="${escapeHtml(r.id)}" ${hasRole ? 'checked' : ''}>
+        <div class="role-color" style="background:${/^#[0-9a-fA-F]{6}$/.test(r.color) && r.color !== '#000000' ? r.color : '#64748b'}"></div>
+        <span>${escapeHtml(r.name)}</span>
       </label>
     `;
   }).join('');
-  
+
   modal.innerHTML = `
     <div style="background:#1e293b; padding:2rem; border-radius:12px; border:1px solid rgba(255,255,255,0.1); width:400px; max-width:90%;">
-      <h3 style="margin-top:0;">Manage Roles for ${tag}</h3>
+      <h3 style="margin-top:0;">Manage Roles for ${escapeHtml(tag)}</h3>
       <div style="display:flex; flex-direction:column; gap:8px; margin:20px 0; max-height:300px; overflow-y:auto;" id="role-checkboxes">
         ${rolesHtml}
       </div>
@@ -738,8 +786,8 @@ async function loadSettings() {
   const guildRoles = roles.filter(r => r.name !== '@everyone');
 
   // Populate dropdowns
-  const cOptions = '<option value="">None</option>' + textChannels.map(c => `<option value="${c.id}">#${c.name}</option>`).join('');
-  const rOptions = '<option value="">None</option>' + guildRoles.map(r => `<option value="${r.id}">${r.name}</option>`).join('');
+  const cOptions = '<option value="">None</option>' + textChannels.map(c => `<option value="${escapeHtml(c.id)}">#${escapeHtml(c.name)}</option>`).join('');
+  const rOptions = '<option value="">None</option>' + guildRoles.map(r => `<option value="${escapeHtml(r.id)}">${escapeHtml(r.name)}</option>`).join('');
   
   document.getElementById('set-welcome-channel').innerHTML = cOptions;
   document.getElementById('set-log-channel').innerHTML = cOptions;
@@ -766,10 +814,10 @@ function renderCommands(cmds) {
   list.innerHTML = cmds.map(c => `
     <div style="display:flex; justify-content:space-between; align-items:center; background:rgba(0,0,0,0.2); padding:10px; border-radius:6px; border:1px solid rgba(255,255,255,0.05);">
       <div>
-        <div style="font-weight:bold; color:#38bdf8;">${c.name} <span style="font-size:0.7rem; color:#94a3b8; background:rgba(255,255,255,0.1); padding:2px 6px; border-radius:4px; margin-left:6px;">${c.type === 'anywhere' ? 'Anywhere' : 'Prefix'}</span></div>
-        <div style="font-size:0.8rem; color:#94a3b8;">Replies: ${c.reply}</div>
+        <div style="font-weight:bold; color:#38bdf8;">${escapeHtml(c.name)} <span style="font-size:0.7rem; color:#94a3b8; background:rgba(255,255,255,0.1); padding:2px 6px; border-radius:4px; margin-left:6px;">${c.type === 'anywhere' ? 'Anywhere' : 'Prefix'}</span></div>
+        <div style="font-size:0.8rem; color:#94a3b8;">Replies: ${escapeHtml(c.reply)}</div>
       </div>
-      <button onclick="deleteCommand('${c.name}')" style="background:none; border:none; color:#ef4444; cursor:pointer;" title="Delete Command"><svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg></button>
+      <button onclick="deleteCommand('${escapeJsAttr(c.name)}')" style="background:none; border:none; color:#ef4444; cursor:pointer;" title="Delete Command"><svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg></button>
     </div>
   `).join('');
 }
@@ -877,12 +925,12 @@ async function handleAutocomplete(input) {
       if (filtered.length > 0) {
         dropdown.style.display = 'block';
         dropdown.innerHTML = filtered.map(m => `
-          <div style="padding:8px; cursor:pointer; display:flex; align-items:center; gap:8px;" 
-               onmouseover="this.style.background='rgba(255,255,255,0.1)'" 
+          <div style="padding:8px; cursor:pointer; display:flex; align-items:center; gap:8px;"
+               onmouseover="this.style.background='rgba(255,255,255,0.1)'"
                onmouseout="this.style.background='none'"
-               onclick="selectAutocomplete('${m.id}', '${m.tag.replace(/'/g, "\\'")}', 'user')">
-            <img src="${m.avatar}" style="width:24px; height:24px; border-radius:50%; object-fit:cover;">
-            <span>${m.tag}</span>
+               onclick="selectAutocomplete('${escapeJsAttr(m.id)}', '${escapeJsAttr(m.tag)}', 'user')">
+            <img src="${escapeHtml(m.avatar)}" style="width:24px; height:24px; border-radius:50%; object-fit:cover;">
+            <span>${escapeHtml(m.tag)}</span>
           </div>
         `).join('');
       } else {
@@ -900,12 +948,12 @@ async function handleAutocomplete(input) {
       if (filtered.length > 0) {
         dropdown.style.display = 'block';
         dropdown.innerHTML = filtered.map(c => `
-          <div style="padding:8px; cursor:pointer; display:flex; align-items:center; gap:8px;" 
-               onmouseover="this.style.background='rgba(255,255,255,0.1)'" 
+          <div style="padding:8px; cursor:pointer; display:flex; align-items:center; gap:8px;"
+               onmouseover="this.style.background='rgba(255,255,255,0.1)'"
                onmouseout="this.style.background='none'"
-               onclick="selectAutocomplete('${c.id}', '${c.name.replace(/'/g, "\\'")}', 'channel')">
+               onclick="selectAutocomplete('${escapeJsAttr(c.id)}', '${escapeJsAttr(c.name)}', 'channel')">
             <svg viewBox="0 0 24 24" width="16" height="16" stroke="#94a3b8" stroke-width="2" fill="none"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
-            <span style="color:#e2e8f0; font-weight:500;">#${c.name}</span>
+            <span style="color:#e2e8f0; font-weight:500;">#${escapeHtml(c.name)}</span>
           </div>
         `).join('');
       } else {
@@ -1001,13 +1049,13 @@ async function loadTickets() {
           const time = new Date(msg.timestamp).toLocaleTimeString();
           transcriptHtml += `
             <div style="display:flex; margin-bottom:1rem; padding-bottom:1rem; border-bottom:1px solid rgba(255,255,255,0.02);">
-              <img src="${msg.avatar || 'https://cdn.discordapp.com/embed/avatars/0.png'}" style="width:42px; height:42px; border-radius:50%; margin-right:1rem; background:#1e293b; object-fit:cover;" />
+              <img src="${escapeHtml(msg.avatar || 'https://cdn.discordapp.com/embed/avatars/0.png')}" style="width:42px; height:42px; border-radius:50%; margin-right:1rem; background:#1e293b; object-fit:cover;" />
               <div>
                 <div style="display:flex; align-items:baseline; margin-bottom:4px;">
-                  <strong style="color:#f8fafc; font-size:1.05rem; margin-right:8px;">${msg.author}</strong>
+                  <strong style="color:#f8fafc; font-size:1.05rem; margin-right:8px;">${escapeHtml(msg.author)}</strong>
                   <span style="color:#64748b; font-size:0.75rem;">${time}</span>
                 </div>
-                <div style="color:#cbd5e1; font-size:0.95rem;">${msg.content}</div>
+                <div style="color:#cbd5e1; font-size:0.95rem;">${escapeHtml(msg.content)}</div>
               </div>
             </div>
           `;
@@ -1017,13 +1065,14 @@ async function loadTickets() {
       }
       transcriptHtml += '</div>';
 
+      const safeTicketId = escapeJsAttr(t._id);
       let actionButtons = '';
       if (!isArchived) {
-        actionButtons = `<button onclick="archiveTicket('${t._id}', true)" style="background:#f59e0b; color:#fff; border:none; padding:6px 12px; border-radius:4px; font-weight:bold; cursor:pointer; margin-right:8px;">Archive</button>`;
+        actionButtons = `<button onclick="archiveTicket('${safeTicketId}', true)" style="background:#f59e0b; color:#fff; border:none; padding:6px 12px; border-radius:4px; font-weight:bold; cursor:pointer; margin-right:8px;">Archive</button>`;
       } else {
         actionButtons = `
-          <button onclick="archiveTicket('${t._id}', false)" style="background:#10b981; color:#fff; border:none; padding:6px 12px; border-radius:4px; font-weight:bold; cursor:pointer; margin-right:8px;">Restore</button>
-          <button onclick="deleteTicket('${t._id}')" style="background:#ef4444; color:#fff; border:none; padding:6px 12px; border-radius:4px; font-weight:bold; cursor:pointer; margin-right:8px;">Delete</button>
+          <button onclick="archiveTicket('${safeTicketId}', false)" style="background:#10b981; color:#fff; border:none; padding:6px 12px; border-radius:4px; font-weight:bold; cursor:pointer; margin-right:8px;">Restore</button>
+          <button onclick="deleteTicket('${safeTicketId}')" style="background:#ef4444; color:#fff; border:none; padding:6px 12px; border-radius:4px; font-weight:bold; cursor:pointer; margin-right:8px;">Delete</button>
         `;
       }
 
@@ -1031,11 +1080,11 @@ async function loadTickets() {
         <div style="background:rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.05); border-radius:8px; padding:1rem;">
           <div style="display:flex; justify-content:space-between; align-items:center;">
             <div>
-              <h4 style="margin:0; color:#f8fafc; font-size:1.1rem;">${t.ticketName}</h4>
-              <div style="color:#94a3b8; font-size:0.9rem; margin-top:4px;">Closed by <strong style="color:white;">${t.closedBy}</strong> on ${date}</div>
+              <h4 style="margin:0; color:#f8fafc; font-size:1.1rem;">${escapeHtml(t.ticketName)}</h4>
+              <div style="color:#94a3b8; font-size:0.9rem; margin-top:4px;">Closed by <strong style="color:white;">${escapeHtml(t.closedBy)}</strong> on ${date}</div>
             </div>
             <div style="text-align:right;">
-              <div style="color:#ef4444; font-size:0.9rem; margin-bottom:8px;"><strong>Reason:</strong> ${t.reason}</div>
+              <div style="color:#ef4444; font-size:0.9rem; margin-bottom:8px;"><strong>Reason:</strong> ${escapeHtml(t.reason)}</div>
               <div>
                 ${actionButtons}
                 <button onclick="document.getElementById('transcript-${i}').style.display = document.getElementById('transcript-${i}').style.display === 'none' ? 'block' : 'none'" style="background:#38bdf8; color:#0f172a; border:none; padding:6px 12px; border-radius:4px; font-weight:bold; cursor:pointer;">View</button>

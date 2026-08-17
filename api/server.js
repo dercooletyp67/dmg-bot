@@ -1,12 +1,17 @@
 const express = require('express');
 const path = require('path');
 const rateLimit = require('express-rate-limit');
+const helmet = require('helmet');
 const { v4: uuidv4 } = require('uuid');
 const { prisma } = require('../database');
 
-module.exports = (client) => {
+module.exports = (client, io) => {
   const app = express();
-  
+
+  // contentSecurityPolicy is left off: the dashboard relies heavily on inline
+  // onclick/style attributes throughout, which a default CSP would block outright.
+  // Tightening that properly means moving those to addEventListener/classes first.
+  app.use(helmet({ contentSecurityPolicy: false }));
   app.use(express.json());
   app.use(express.static(path.join(__dirname, '../public')));
 
@@ -19,6 +24,17 @@ module.exports = (client) => {
 
   const activeSessions = new Map(); // token -> { id, tag, avatar }
   const pendingStates = new Map();  // state -> expiresAt, CSRF protection for the OAuth handshake
+  const pendingHandoffs = new Map(); // one-time handoff code -> { token, expiresAt }, so the real
+                                      // session token never has to sit in a URL / server access log
+
+  // Without this, anyone could connect a socket.io client directly to this origin
+  // and receive the live message feed for every channel the bot watches, with no
+  // login at all - the dashboard's /api auth never runs for socket.io connections.
+  io.use((socket, next) => {
+    const token = socket.handshake.auth?.token;
+    if (token && activeSessions.has(token)) return next();
+    next(new Error('unauthorized'));
+  });
 
   const authLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
@@ -92,11 +108,25 @@ module.exports = (client) => {
         avatar: member.displayAvatarURL({ size: 64 })
       });
 
-      res.redirect(`/?token=${token}`);
+      const handoffCode = uuidv4();
+      pendingHandoffs.set(handoffCode, { token, expiresAt: Date.now() + 60 * 1000 });
+
+      res.redirect(`/?code=${handoffCode}`);
     } catch (err) {
       console.error('Discord OAuth callback failed:', err);
       res.redirect('/?authError=server');
     }
+  });
+
+  app.get('/api/auth/exchange', authLimiter, (req, res) => {
+    const { code } = req.query;
+    const handoff = code && pendingHandoffs.get(code);
+    if (code) pendingHandoffs.delete(code);
+
+    if (!handoff || handoff.expiresAt < Date.now()) {
+      return res.status(401).json({ error: 'Invalid or expired code' });
+    }
+    res.json({ token: handoff.token });
   });
 
   app.post('/api/logout', (req, res) => {
@@ -105,7 +135,7 @@ module.exports = (client) => {
   });
 
   app.use('/api', (req, res, next) => {
-    if (req.path === '/auth/discord' || req.path === '/auth/discord/callback') return next();
+    if (req.path === '/auth/discord' || req.path === '/auth/discord/callback' || req.path === '/auth/exchange') return next();
     if (activeSessions.has(req.headers.authorization)) return next();
     res.status(401).json({ error: 'Unauthorized' });
   });
@@ -174,7 +204,8 @@ module.exports = (client) => {
       });
       res.json(tickets);
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      console.error(err);
+      res.status(500).json({ error: 'Something went wrong.' });
     }
   });
 
@@ -187,7 +218,8 @@ module.exports = (client) => {
       });
       res.json({ success: true });
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      console.error(err);
+      res.status(500).json({ error: 'Something went wrong.' });
     }
   });
 
@@ -196,7 +228,8 @@ module.exports = (client) => {
       await prisma.ticketTranscript.delete({ where: { id: req.params.id } });
       res.json({ success: true });
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      console.error(err);
+      res.status(500).json({ error: 'Something went wrong.' });
     }
   });
 
@@ -279,7 +312,7 @@ module.exports = (client) => {
       const guild = await client.guilds.fetch(GUILD_ID);
       const channels = guild.channels.cache.map(c => ({ id: c.id, name: c.name, type: c.type, parentId: c.parentId }));
       res.json(channels);
-    } catch (err) { res.status(500).json({error: err.message}); }
+    } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong.' }); }
   });
 
   app.post('/api/guild/channels', async (req, res) => {
@@ -288,7 +321,7 @@ module.exports = (client) => {
       const { name, type, parentId } = req.body;
       const channel = await guild.channels.create({ name, type, parent: parentId });
       res.json({ id: channel.id, name: channel.name });
-    } catch (err) { res.status(500).json({error: err.message}); }
+    } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong.' }); }
   });
 
   app.delete('/api/guild/channels/:id', async (req, res) => {
@@ -296,7 +329,7 @@ module.exports = (client) => {
       const channel = await client.channels.fetch(req.params.id);
       await channel.delete();
       res.json({ success: true });
-    } catch (err) { res.status(500).json({error: err.message}); }
+    } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong.' }); }
   });
 
   app.patch('/api/guild/channels/:id', async (req, res) => {
@@ -304,7 +337,7 @@ module.exports = (client) => {
       const channel = await client.channels.fetch(req.params.id);
       await channel.edit({ name: req.body.name });
       res.json({ success: true });
-    } catch (err) { res.status(500).json({error: err.message}); }
+    } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong.' }); }
   });
 
   app.get('/api/guild/roles', async (req, res) => {
@@ -312,7 +345,7 @@ module.exports = (client) => {
       const guild = await client.guilds.fetch(GUILD_ID);
       const roles = guild.roles.cache.map(r => ({ id: r.id, name: r.name, color: r.hexColor }));
       res.json(roles);
-    } catch (err) { res.status(500).json({error: err.message}); }
+    } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong.' }); }
   });
 
   app.post('/api/guild/roles', async (req, res) => {
@@ -325,7 +358,7 @@ module.exports = (client) => {
         permissions: permissions || []
       });
       res.json({ id: role.id, name: role.name });
-    } catch (err) { res.status(500).json({error: err.message}); }
+    } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong.' }); }
   });
 
   app.delete('/api/guild/roles/:id', async (req, res) => {
@@ -334,7 +367,7 @@ module.exports = (client) => {
       const role = await guild.roles.fetch(req.params.id);
       await role.delete();
       res.json({ success: true });
-    } catch (err) { res.status(500).json({error: err.message}); }
+    } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong.' }); }
   });
 
   app.get('/api/guild/members', async (req, res) => {
@@ -349,9 +382,9 @@ module.exports = (client) => {
         joinedAt: m.joinedTimestamp
       }));
       res.json(Array.from(mapped.values()));
-    } catch (err) { 
+    } catch (err) {
       console.error("Error fetching members:", err);
-      res.status(500).json({error: err.message}); 
+      res.status(500).json({ error: 'Something went wrong.' });
     }
   });
 
@@ -361,7 +394,7 @@ module.exports = (client) => {
       const member = await guild.members.fetch(req.params.id);
       await member.kick('Kicked via Dashboard');
       res.json({ success: true });
-    } catch (err) { res.status(500).json({error: err.message}); }
+    } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong.' }); }
   });
 
   app.post('/api/guild/members/:id/ban', async (req, res) => {
@@ -369,7 +402,7 @@ module.exports = (client) => {
       const guild = await client.guilds.fetch(GUILD_ID);
       await guild.members.ban(req.params.id, { reason: 'Banned via Dashboard' });
       res.json({ success: true });
-    } catch (err) { res.status(500).json({error: err.message}); }
+    } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong.' }); }
   });
 
   app.patch('/api/guild/members/:id/roles', async (req, res) => {
@@ -378,7 +411,7 @@ module.exports = (client) => {
       const member = await guild.members.fetch(req.params.id);
       await member.roles.set(req.body.roles);
       res.json({ success: true });
-    } catch (err) { res.status(500).json({error: err.message}); }
+    } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong.' }); }
   });
 
   app.get('/api/guild/channels/:id/messages', async (req, res) => {
@@ -396,7 +429,7 @@ module.exports = (client) => {
         embeds: m.embeds.map(e => ({ title: e.title, description: e.description, color: e.hexColor, footer: e.footer?.text }))
       })).reverse();
       res.json(msgs);
-    } catch (err) { res.status(500).json({error: err.message}); }
+    } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong.' }); }
   });
 
   app.post('/api/guild/channels/:id/messages', async (req, res) => {
@@ -416,7 +449,7 @@ module.exports = (client) => {
 
       const msg = await channel.send(sendPayload);
       res.json({ id: msg.id, content: msg.content, author: msg.author.tag });
-    } catch (err) { res.status(500).json({error: err.message}); }
+    } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong.' }); }
   });
 
   app.delete('/api/guild/messages/:channelId/:msgId', async (req, res) => {
@@ -424,7 +457,7 @@ module.exports = (client) => {
       const channel = await client.channels.fetch(req.params.channelId);
       await channel.messages.delete(req.params.msgId);
       res.json({ success: true });
-    } catch (err) { res.status(500).json({error: err.message}); }
+    } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong.' }); }
   });
 
   app.put('/api/guild/messages/:channelId/:msgId', async (req, res) => {
@@ -447,14 +480,14 @@ module.exports = (client) => {
 
       await msg.edit(editPayload);
       res.json({ success: true });
-    } catch (err) { res.status(500).json({error: err.message}); }
+    } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong.' }); }
   });
 
   app.get('/api/memberlist', async (req, res) => {
     try {
       const members = await prisma.memberlist.findMany({ orderBy: { inGameName: 'asc' } });
       res.json(members);
-    } catch (err) { res.status(500).json({error: err.message}); }
+    } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong.' }); }
   });
 
   app.post('/api/memberlist', async (req, res) => {
@@ -468,7 +501,7 @@ module.exports = (client) => {
       const { updateMemberlistEmbed } = require('../bot/memberlistSystem');
       await updateMemberlistEmbed(client);
       res.json(member);
-    } catch (err) { res.status(500).json({error: err.message}); }
+    } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong.' }); }
   });
 
   app.delete('/api/memberlist/:id', async (req, res) => {
@@ -477,7 +510,7 @@ module.exports = (client) => {
       const { updateMemberlistEmbed } = require('../bot/memberlistSystem');
       await updateMemberlistEmbed(client);
       res.json({ success: true });
-    } catch (err) { res.status(500).json({error: err.message}); }
+    } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong.' }); }
   });
 
   app.post('/api/memberlist/sync', async (req, res) => {
@@ -504,7 +537,7 @@ module.exports = (client) => {
       await updateMemberlistEmbed(client);
       
       res.json({ success: true, count: insertData.length });
-    } catch (err) { res.status(500).json({error: err.message}); }
+    } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong.' }); }
   });
 
   return app;
