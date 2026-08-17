@@ -236,10 +236,24 @@ module.exports = (client, io) => {
   app.get('/api/applications', async (req, res) => {
     try {
       const applications = await prisma.application.findMany({ orderBy: { timestamp: 'desc' } });
-      const formatted = applications.map(app => ({
-        ...app,
-        answers: JSON.parse(app.answers)
-      }));
+      const formatted = applications.map(app => {
+        let parsed = {};
+        try { parsed = JSON.parse(app.answers); } catch (e) {}
+        return {
+          id: app.id,
+          userId: app.userId,
+          status: app.status,
+          reason: app.reason,
+          processedBy: app.processedBy,
+          timestamp: app.timestamp,
+          userTag: parsed.userTag,
+          aiScore: parsed.aiScore,
+          timeTaken: parsed.timeTaken,
+          plagiarism: parsed.plagiarism,
+          questions: parsed.questions,
+          answers: parsed.answers
+        };
+      });
       res.json(formatted);
     } catch (err) {
       console.error(err);

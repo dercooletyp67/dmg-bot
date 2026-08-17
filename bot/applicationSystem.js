@@ -301,9 +301,10 @@ module.exports = function setupApplicationSystem(client) {
               orderBy: { timestamp: 'desc' }
             });
             if (recentApp) {
+              const statusMap = { accept: 'ACCEPTED', deny: 'DENIED', blacklist: 'BLACKLISTED' };
               await prisma.application.update({
                 where: { id: recentApp.id },
-                data: { status: action.toUpperCase() }
+                data: { status: statusMap[action] || action.toUpperCase(), reason, processedBy: interaction.user.tag }
               });
             }
 

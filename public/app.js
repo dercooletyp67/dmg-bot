@@ -265,7 +265,7 @@ function renderApplications() {
   const filteredApps = allApplications.filter(app => {
     const matchesSearch = (app.userTag && app.userTag.toLowerCase().includes(searchInput)) || 
                           (app.userId && app.userId.includes(searchInput));
-    const matchesFilter = appStatusFilter === 'all' || app.status.toLowerCase() === appStatusFilter;
+    const matchesFilter = appStatusFilter === 'all' || (app.status || '').toLowerCase().startsWith(appStatusFilter.slice(0, 3));
     return matchesSearch && matchesFilter;
   });
   
@@ -275,10 +275,11 @@ function renderApplications() {
   }
   
   filteredApps.forEach(app => {
+     const statusUpper = (app.status || '').toUpperCase();
      let color = '#38bdf8'; // Default pending
-     if (app.status === 'ACCEPTED') color = '#10b981';
-     if (app.status === 'DENIED') color = '#ef4444';
-     if (app.status === 'BLACKLISTED') color = '#64748b';
+     if (statusUpper.startsWith('ACC')) color = '#10b981';
+     if (statusUpper.startsWith('DEN')) color = '#ef4444';
+     if (statusUpper.startsWith('BLA')) color = '#64748b';
      
      const div = document.createElement('div');
      div.className = 'dashboard-card';

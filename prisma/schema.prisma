@@ -51,11 +51,13 @@ model TicketTranscript {
 }
 
 model Application {
-  id        String   @id @default(uuid())
-  userId    String
-  answers   String   // Store as JSON string
-  status    String   @default("pending") // pending, accepted, denied, blacklisted
-  timestamp DateTime @default(now())
+  id          String   @id @default(uuid())
+  userId      String
+  answers     String   // Store as JSON string
+  status      String   @default("pending") // pending, accepted, denied, blacklisted
+  reason      String?
+  processedBy String?
+  timestamp   DateTime @default(now())
 }
 
 model AppCooldown {
