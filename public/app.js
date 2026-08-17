@@ -4,6 +4,48 @@ let socket = null;
 
 let isEmbedOpen = false;
 
+(function handleOAuthRedirect() {
+  const params = new URLSearchParams(window.location.search);
+  const urlToken = params.get('token');
+  const authError = params.get('authError');
+
+  if (urlToken) {
+    sessionToken = urlToken;
+    localStorage.setItem('dmg_admin_token', sessionToken);
+  }
+
+  if (urlToken || authError) {
+    window.history.replaceState({}, document.title, window.location.pathname);
+  }
+
+  if (authError) {
+    const messages = {
+      state: 'Login session expired. Please try again.',
+      token: 'Discord rejected the login request. Please try again.',
+      profile: 'Could not verify your Discord account. Please try again.',
+      not_member: 'You must be a member of the DMG Discord server to access this dashboard.',
+      forbidden: 'Your Discord account does not have permission to access this dashboard.',
+      server: 'Something went wrong during login. Please try again.'
+    };
+    const errEl = document.getElementById('login-err');
+    errEl.textContent = messages[authError] || 'Login failed. Please try again.';
+    errEl.style.display = 'block';
+  }
+})();
+
+async function loadSession() {
+  try {
+    const res = await apiFetch('/api/session');
+    if (!res.ok) return;
+    const session = await res.json();
+    if (!session) return;
+    document.getElementById('brand-name').innerText = session.tag;
+    document.getElementById('brand-sub').innerText = 'Signed in with Discord';
+    const mark = document.getElementById('brand-mark');
+    mark.innerHTML = `<img src="${session.avatar}" style="width:100%; height:100%; object-fit:cover;">`;
+  } catch (e) {}
+}
+
 function buildMessageHtml(m, channelId) {
   let embedHtml = '';
   if (m.embeds && m.embeds.length > 0) {
@@ -75,30 +117,6 @@ function toggleEmbed() {
 }
 
 // --- AUTHENTICATION ---
-async function attemptLogin() {
-  const pwd = document.getElementById('login-pwd').value;
-  try {
-    const res = await fetch('/api/auth', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password: pwd })
-    });
-    const data = await res.json();
-    if (res.ok && data.success) {
-      sessionToken = data.token;
-      localStorage.setItem('dmg_admin_token', sessionToken);
-      document.getElementById('login-overlay').style.display = 'none';
-      document.getElementById('main-app').style.display = 'flex';
-      initSocket();
-      loadOverview();
-    } else {
-      document.getElementById('login-err').style.display = 'block';
-    }
-  } catch (err) {
-    console.error(err);
-  }
-}
-
 async function logout() {
   await fetch('/api/logout', { method: 'POST', headers: { 'Authorization': sessionToken } });
   sessionToken = '';
@@ -135,6 +153,7 @@ if (!sessionToken) {
         document.getElementById('main-app').style.display = 'flex';
         initSocket();
         loadOverview();
+        loadSession();
       }
     }).catch(() => {});
 }

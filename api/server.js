@@ -10,23 +10,92 @@ module.exports = (client) => {
   app.use(express.json());
   app.use(express.static(path.join(__dirname, '../public')));
 
-  const adminPasswords = process.env.ADMIN_PASSWORDS ? process.env.ADMIN_PASSWORDS.split(',') : [process.env.ADMIN_PASSWORD || 'dmgadmin123'];
   const GUILD_ID = process.env.GUILD_ID || '1423630012623491073';
-  const activeSessions = new Set();
+  const DISCORD_CLIENT_ID = process.env.DISCORD_CLIENT_ID;
+  const DISCORD_CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET;
+  const DISCORD_REDIRECT_URI = process.env.DISCORD_REDIRECT_URI;
+  const ADMIN_ROLE_IDS = (process.env.ADMIN_ROLE_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
+  const ADMIN_USER_IDS = (process.env.ADMIN_USER_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
+
+  const activeSessions = new Map(); // token -> { id, tag, avatar }
+  const pendingStates = new Map();  // state -> expiresAt, CSRF protection for the OAuth handshake
 
   const authLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
-    max: 5,
+    max: 10,
     message: { error: 'Too many login attempts, please try again after 15 minutes' }
   });
 
-  app.post('/api/auth', authLimiter, (req, res) => {
-    if (adminPasswords.includes(req.body.password)) {
+  function isAuthorizedMember(member) {
+    if (ADMIN_USER_IDS.includes(member.id)) return true;
+    if (member.permissions.has('Administrator')) return true;
+    if (ADMIN_ROLE_IDS.length > 0 && ADMIN_ROLE_IDS.some(id => member.roles.cache.has(id))) return true;
+    return false;
+  }
+
+  app.get('/api/auth/discord', authLimiter, (req, res) => {
+    if (!DISCORD_CLIENT_ID || !DISCORD_REDIRECT_URI) {
+      return res.status(500).send('Discord OAuth is not configured on the server yet.');
+    }
+    const state = uuidv4();
+    pendingStates.set(state, Date.now() + 10 * 60 * 1000);
+    const params = new URLSearchParams({
+      client_id: DISCORD_CLIENT_ID,
+      redirect_uri: DISCORD_REDIRECT_URI,
+      response_type: 'code',
+      scope: 'identify',
+      state
+    });
+    res.redirect(`https://discord.com/api/oauth2/authorize?${params}`);
+  });
+
+  app.get('/api/auth/discord/callback', authLimiter, async (req, res) => {
+    const { code, state } = req.query;
+    const stateExpiry = state && pendingStates.get(state);
+    if (state) pendingStates.delete(state);
+
+    if (!code || !stateExpiry || stateExpiry < Date.now()) {
+      return res.redirect('/?authError=state');
+    }
+
+    try {
+      const tokenRes = await fetch('https://discord.com/api/oauth2/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          client_id: DISCORD_CLIENT_ID,
+          client_secret: DISCORD_CLIENT_SECRET,
+          grant_type: 'authorization_code',
+          code,
+          redirect_uri: DISCORD_REDIRECT_URI
+        })
+      });
+      if (!tokenRes.ok) return res.redirect('/?authError=token');
+      const tokenData = await tokenRes.json();
+
+      const userRes = await fetch('https://discord.com/api/users/@me', {
+        headers: { Authorization: `Bearer ${tokenData.access_token}` }
+      });
+      if (!userRes.ok) return res.redirect('/?authError=profile');
+      const discordUser = await userRes.json();
+
+      const guild = await client.guilds.fetch(GUILD_ID);
+      const member = await guild.members.fetch(discordUser.id).catch(() => null);
+
+      if (!member) return res.redirect('/?authError=not_member');
+      if (!isAuthorizedMember(member)) return res.redirect('/?authError=forbidden');
+
       const token = uuidv4();
-      activeSessions.add(token);
-      res.json({ success: true, token });
-    } else {
-      res.status(401).json({ success: false });
+      activeSessions.set(token, {
+        id: member.id,
+        tag: discordUser.username,
+        avatar: member.displayAvatarURL({ size: 64 })
+      });
+
+      res.redirect(`/?token=${token}`);
+    } catch (err) {
+      console.error('Discord OAuth callback failed:', err);
+      res.redirect('/?authError=server');
     }
   });
 
@@ -36,9 +105,13 @@ module.exports = (client) => {
   });
 
   app.use('/api', (req, res, next) => {
-    if (req.path === '/auth') return next();
+    if (req.path === '/auth/discord' || req.path === '/auth/discord/callback') return next();
     if (activeSessions.has(req.headers.authorization)) return next();
     res.status(401).json({ error: 'Unauthorized' });
+  });
+
+  app.get('/api/session', (req, res) => {
+    res.json(activeSessions.get(req.headers.authorization));
   });
 
   // --- SETTINGS & COMMANDS ---

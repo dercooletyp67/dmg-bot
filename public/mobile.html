@@ -3,40 +3,43 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Emergency Alerts</title>
+  <title>DMG // Alerts</title>
   <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
     :root {
-      --bg: #0f172a;
-      --surface: #1e293b;
-      --text: #f8fafc;
+      --bg: #0a0a0b;
+      --panel: #131316;
+      --text: #f4f4f5;
+      --text-dim: #a1a1aa;
+      --text-mute: #71717a;
       --danger: #ef4444;
       --danger-hover: #dc2626;
-      --primary: #3b82f6;
+      --accent: #38bdf8;
+      --success: #10b981;
+      --border: rgba(255, 255, 255, 0.08);
     }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', sans-serif; }
     body {
-      margin: 0;
-      padding: 0;
-      background-color: var(--bg);
+      background: var(--bg);
       color: var(--text);
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
       display: flex;
       flex-direction: column;
       align-items: center;
       min-height: 100vh;
-      box-sizing: border-box;
       -webkit-tap-highlight-color: transparent;
     }
+
     header {
       width: 100%;
       padding: 20px;
       text-align: center;
-      background: var(--surface);
-      border-bottom: 1px solid rgba(255,255,255,0.1);
+      border-bottom: 1px solid var(--border);
       box-sizing: border-box;
     }
-    h1 { margin: 0; font-size: 1.5rem; letter-spacing: 1px; text-transform: uppercase; }
-    p { margin: 5px 0 0 0; color: #94a3b8; font-size: 0.9rem; }
-    
+    header .eyebrow { font-size: 0.72rem; color: var(--text-mute); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 6px; }
+    h1 { margin: 0; font-weight: 700; font-size: 1.25rem; color: var(--text); }
+
     .container {
       flex: 1;
       display: flex;
@@ -54,73 +57,77 @@
       color: white;
       border: none;
       border-radius: 50%;
-      width: 250px;
-      height: 250px;
-      font-size: 1.8rem;
-      font-weight: bold;
-      text-transform: uppercase;
+      width: 220px;
+      height: 220px;
+      font-size: 1.05rem;
+      font-weight: 700;
       cursor: pointer;
-      box-shadow: 0 10px 25px rgba(239, 68, 68, 0.4), inset 0 -5px 15px rgba(0,0,0,0.2);
-      transition: all 0.1s ease;
+      box-shadow: 0 8px 24px rgba(239, 68, 68, 0.25);
+      transition: background 0.12s ease, transform 0.12s ease;
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      gap: 15px;
+      gap: 12px;
     }
-
-    .alert-btn:active {
-      transform: scale(0.95);
-      box-shadow: 0 5px 15px rgba(239, 68, 68, 0.4), inset 0 5px 20px rgba(0,0,0,0.3);
-      background: var(--danger-hover);
-    }
-
-    .alert-btn svg {
-      width: 60px;
-      height: 60px;
-    }
+    .alert-btn:active { transform: scale(0.96); background: var(--danger-hover); }
+    .alert-btn svg { width: 48px; height: 48px; }
 
     #login-container {
       display: flex;
       flex-direction: column;
-      gap: 15px;
+      gap: 14px;
       width: 100%;
       max-width: 300px;
     }
 
-    input {
-      padding: 15px;
-      border-radius: 8px;
-      border: 1px solid rgba(255,255,255,0.2);
-      background: rgba(0,0,0,0.2);
-      color: white;
-      font-size: 1.1rem;
-      text-align: center;
-    }
+    p.hint { text-align: center; color: var(--text-dim); font-size: 0.9rem; }
+    p.err { text-align: center; color: var(--danger); font-size: 0.85rem; display: none; }
 
     .login-btn {
       padding: 15px;
-      background: var(--primary);
+      background: #5865F2;
       color: white;
       border: none;
       border-radius: 8px;
-      font-size: 1.1rem;
-      font-weight: bold;
+      font-size: 0.9rem;
+      font-weight: 600;
+      text-decoration: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 9px;
+      transition: background 0.15s;
+    }
+    .login-btn:hover { background: #6f76f5; }
+    .login-btn svg { width: 18px; height: 18px; fill: white; }
+
+    #status-text {
+      height: 20px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--success);
+      transition: opacity 0.3s;
+      opacity: 0;
     }
   </style>
 </head>
 <body>
 
   <header>
+    <p class="eyebrow">DMG Bot</p>
     <h1>Emergency Alerts</h1>
-    <p>Command Center</p>
   </header>
 
   <div class="container" id="login-view">
-    <p>Enter Admin Password to continue</p>
+    <p class="hint">Authenticate with Discord to continue</p>
     <div id="login-container">
-      <input type="password" id="password" placeholder="Password">
-      <button class="login-btn" onclick="login()">Unlock</button>
+      <a href="/api/auth/discord" class="login-btn">
+        <svg viewBox="0 0 127.14 96.36" xmlns="http://www.w3.org/2000/svg"><path d="M107.7,8.07A105.15,105.15,0,0,0,81.47,0a72.06,72.06,0,0,0-3.36,6.83A97.68,97.68,0,0,0,49,6.83,72.37,72.37,0,0,0,45.64,0,105.89,105.89,0,0,0,19.39,8.09C2.79,32.65-1.71,56.6.54,80.21h0A105.73,105.73,0,0,0,32.71,96.36,77.7,77.7,0,0,0,39.6,85.25a68.42,68.42,0,0,1-10.85-5.18c.91-.66,1.8-1.34,2.66-2a75.57,75.57,0,0,0,64.32,0c.87.71,1.76,1.39,2.66,2a68.68,68.68,0,0,1-10.87,5.19,77,77,0,0,0,6.89,11.1A105.25,105.25,0,0,0,126.6,80.22h0C129.24,52.84,122.09,29.11,107.7,8.07ZM42.45,65.69C36.18,65.69,31,60,31,53s5-12.74,11.43-12.74S54,46,53.89,53,48.84,65.69,42.45,65.69Zm42.24,0C78.41,65.69,73.25,60,73.25,53s5-12.74,11.44-12.74S96.23,46,96.12,53,91.08,65.69,84.69,65.69Z"/></svg>
+        Continue with Discord
+      </a>
+      <p class="err" id="login-err"></p>
     </div>
   </div>
 
@@ -133,50 +140,62 @@
       </svg>
       Territory Attack
     </button>
-    <p id="status-text" style="height: 20px; color: #10b981; font-weight: bold; transition: opacity 0.3s; opacity: 0;"></p>
+    <p id="status-text"></p>
   </div>
 
   <script>
     let token = localStorage.getItem('dmg_token');
+
+    (function handleOAuthRedirect() {
+      const params = new URLSearchParams(window.location.search);
+      const urlToken = params.get('token');
+      const authError = params.get('authError');
+
+      if (urlToken) {
+        token = urlToken;
+        localStorage.setItem('dmg_token', token);
+      }
+
+      if (urlToken || authError) {
+        window.history.replaceState({}, document.title, window.location.pathname);
+      }
+
+      if (authError) {
+        const messages = {
+          state: 'Login session expired. Please try again.',
+          token: 'Discord rejected the login request. Please try again.',
+          profile: 'Could not verify your Discord account. Please try again.',
+          not_member: 'You must be a member of the DMG Discord server to access this.',
+          forbidden: 'Your Discord account does not have permission to access this.',
+          server: 'Something went wrong during login. Please try again.'
+        };
+        const errEl = document.getElementById('login-err');
+        errEl.textContent = messages[authError] || 'Login failed. Please try again.';
+        errEl.style.display = 'block';
+      }
+    })();
 
     if (token) {
       document.getElementById('login-view').style.display = 'none';
       document.getElementById('app-view').style.display = 'flex';
     }
 
-    async function login() {
-      const pwd = document.getElementById('password').value;
-      const res = await fetch('/api/auth', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password: pwd })
-      });
-      if (res.ok) {
-        localStorage.setItem('dmg_token', pwd);
-        token = pwd;
-        document.getElementById('login-view').style.display = 'none';
-        document.getElementById('app-view').style.display = 'flex';
-      } else {
-        alert('Incorrect password');
-      }
-    }
-
     async function triggerAlert(type) {
       if (!token) return;
       const btn = document.getElementById('btn-' + type);
       const status = document.getElementById('status-text');
-      
+
       btn.style.opacity = '0.7';
       btn.style.pointerEvents = 'none';
-      
+
       try {
         const res = await fetch(`/api/alerts/${type}`, {
           method: 'POST',
           headers: { 'Authorization': token }
         });
-        
+
         if (res.ok) {
-          status.textContent = 'ALERT SENT SUCCESSFULLY!';
+          status.textContent = 'Alert sent successfully.';
           status.style.color = '#10b981';
           status.style.opacity = '1';
           if(navigator.vibrate) navigator.vibrate([200, 100, 200]);
@@ -184,16 +203,16 @@
           localStorage.removeItem('dmg_token');
           location.reload();
         } else {
-          status.textContent = 'FAILED TO SEND ALERT.';
+          status.textContent = 'Failed to send alert.';
           status.style.color = '#ef4444';
           status.style.opacity = '1';
         }
       } catch (err) {
-        status.textContent = 'NETWORK ERROR.';
+        status.textContent = 'Network error.';
         status.style.color = '#ef4444';
         status.style.opacity = '1';
       }
-      
+
       setTimeout(() => {
         btn.style.opacity = '1';
         btn.style.pointerEvents = 'all';

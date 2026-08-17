@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "DMG Clan Discord Bot",
   "main": "index.js",
+  "engines": {
+    "node": ">=18.17.0"
+  },
   "scripts": {
     "start": "npx prisma generate && npx prisma db push --accept-data-loss && node index.js"
   },

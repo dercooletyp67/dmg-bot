@@ -332,7 +332,7 @@ function setupBot(io) {
       if (cmd) await message.reply(cmd.reply);
     } catch(e) {}
 
-    if (client.io && message.guildId === '1494354069605584896') {
+    if (client.io && message.guildId === GUILD_ID) {
       client.io.emit('newMessage', {
         channelId: message.channelId,
         message: {
@@ -355,7 +355,7 @@ function setupBot(io) {
       await sendAuditLog(embed);
     }
 
-    if (client.io && message.guildId === '1494354069605584896') {
+    if (client.io && message.guildId === GUILD_ID) {
       client.io.emit('deleteMessage', {
         channelId: message.channelId,
         messageId: message.id
@@ -364,7 +364,7 @@ function setupBot(io) {
   });
 
   client.on('messageUpdate', (oldMsg, newMsg) => {
-    if (client.io && newMsg.guildId === '1494354069605584896') {
+    if (client.io && newMsg.guildId === GUILD_ID) {
       client.io.emit('updateMessage', {
         channelId: newMsg.channelId,
         message: {
