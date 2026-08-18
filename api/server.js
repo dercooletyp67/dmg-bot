@@ -324,7 +324,7 @@ module.exports = (client, io) => {
   app.get('/api/guild/channels', async (req, res) => {
     try {
       const guild = await client.guilds.fetch(GUILD_ID);
-      const channels = guild.channels.cache.map(c => ({ id: c.id, name: c.name, type: c.type, parentId: c.parentId }));
+      const channels = guild.channels.cache.map(c => ({ id: c.id, name: c.name, type: c.type, parentId: c.parentId, position: c.rawPosition }));
       res.json(channels);
     } catch (err) { console.error(err); res.status(500).json({ error: 'Something went wrong.' }); }
   });

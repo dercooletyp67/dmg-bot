@@ -222,7 +222,7 @@ function switchTab(tabId) {
     // Populate the channels dropdown for the memberlist setting
     apiFetch('/api/guild/channels').then(res => res.json()).then(channels => {
       const select = document.getElementById('set-memberlist-channel');
-      select.innerHTML = '<option value="">None</option>' + channels.filter(c => c.type === 0).map(c => `<option value="${escapeHtml(c.id)}">#${escapeHtml(c.name)}</option>`).join('');
+      select.innerHTML = '<option value="">None</option>' + channels.filter(c => c.type === 0).sort((a, b) => (a.position ?? 0) - (b.position ?? 0)).map(c => `<option value="${escapeHtml(c.id)}">#${escapeHtml(c.name)}</option>`).join('');
       apiFetch('/api/settings').then(r => r.json()).then(s => {
         if(s.memberlistChannel) select.value = s.memberlistChannel;
       });
@@ -471,12 +471,25 @@ async function loadServerData() {
 async function loadChannels() {
   const res = await apiFetch('/api/guild/channels');
   const channels = await res.json();
+  const byPosition = (a, b) => (a.position ?? 0) - (b.position ?? 0);
   const container = document.getElementById('sm-channels');
   container.innerHTML = '';
-  
-  channels.filter(c => c.type === 4).forEach(cat => {
+
+  // Discord shows uncategorized channels above all categories - match that order.
+  channels.filter(c => !c.parentId && c.type === 0).sort(byPosition).forEach(ch => {
+    const safeId = escapeJsAttr(ch.id), safeName = escapeJsAttr(ch.name);
+    container.innerHTML += `<div class="chan-item" onclick="selectChannel('${safeId}', '${safeName}')" id="chan-${escapeHtml(ch.id)}" style="display:flex; justify-content:space-between; align-items:center;">
+        <div><svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" style="margin-right:4px;"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg> ${escapeHtml(ch.name)}</div>
+        <div style="display:flex; gap:6px; font-size:12px;">
+          <span onclick="event.stopPropagation(); renameChannel('${safeId}', '${safeName}')" style="cursor:pointer; display:flex; align-items:center;" title="Rename"><svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg></span>
+          <span onclick="event.stopPropagation(); deleteChannel('${safeId}', '${safeName}')" style="cursor:pointer; display:flex; align-items:center;" title="Delete"><svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg></span>
+        </div>
+      </div>`;
+  });
+
+  channels.filter(c => c.type === 4).sort(byPosition).forEach(cat => {
     container.innerHTML += `<div style="font-size:0.75rem; font-weight:700; color:#64748b; margin-top:1rem; margin-bottom:4px; text-transform:uppercase;">${escapeHtml(cat.name)}</div>`;
-    channels.filter(c => c.parentId === cat.id && c.type === 0).forEach(ch => {
+    channels.filter(c => c.parentId === cat.id && c.type === 0).sort(byPosition).forEach(ch => {
       const safeId = escapeJsAttr(ch.id), safeName = escapeJsAttr(ch.name);
       container.innerHTML += `<div class="chan-item" onclick="selectChannel('${safeId}', '${safeName}')" id="chan-${escapeHtml(ch.id)}" style="display:flex; justify-content:space-between; align-items:center;">
         <div><svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" style="margin-right:4px;"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg> ${escapeHtml(ch.name)}</div>
@@ -486,16 +499,6 @@ async function loadChannels() {
         </div>
       </div>`;
     });
-  });
-  channels.filter(c => !c.parentId && c.type === 0).forEach(ch => {
-    const safeId = escapeJsAttr(ch.id), safeName = escapeJsAttr(ch.name);
-    container.innerHTML += `<div class="chan-item" onclick="selectChannel('${safeId}', '${safeName}')" id="chan-${escapeHtml(ch.id)}" style="display:flex; justify-content:space-between; align-items:center;">
-        <div><svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" style="margin-right:4px;"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg> ${escapeHtml(ch.name)}</div>
-        <div style="display:flex; gap:6px; font-size:12px;">
-          <span onclick="event.stopPropagation(); renameChannel('${safeId}', '${safeName}')" style="cursor:pointer; display:flex; align-items:center;" title="Rename"><svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg></span>
-          <span onclick="event.stopPropagation(); deleteChannel('${safeId}', '${safeName}')" style="cursor:pointer; display:flex; align-items:center;" title="Delete"><svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg></span>
-        </div>
-      </div>`;
   });
 }
 
@@ -783,7 +786,7 @@ async function loadSettings() {
   const channels = await chRes.json();
   const roles = await roleRes.json();
 
-  const textChannels = channels.filter(c => c.type === 0);
+  const textChannels = channels.filter(c => c.type === 0).sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
   const guildRoles = roles.filter(r => r.name !== '@everyone');
 
   // Populate dropdowns
@@ -941,7 +944,7 @@ async function handleAutocomplete(input) {
       if (autocompleteChannels.length === 0) {
         const res = await apiFetch('/api/guild/channels');
         const allChannels = await res.json();
-        autocompleteChannels = allChannels.filter(c => c.type === 0);
+        autocompleteChannels = allChannels.filter(c => c.type === 0).sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
       }
       const query = channelMatch[1].toLowerCase();
       const filtered = autocompleteChannels.filter(c => c.name.toLowerCase().includes(query)).slice(0, 10);
